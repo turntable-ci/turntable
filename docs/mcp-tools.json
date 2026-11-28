@@ -340,34 +340,6 @@
     }
   },
   {
-    "name": "delete_project_var",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "description": "A variable name: letters, digits and underscores, not starting with GITHUB_."
-        },
-        "org": {
-          "description": "Org slug. Defaults to the caller's org; a token can only name its own.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "project": {
-          "description": "Project slug. Required unless the token is scoped to one project.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        }
-      },
-      "required": ["name"],
-      "additionalProperties": false
-    }
-  },
-  {
     "name": "delete_proxy_passthrough_host",
     "inputSchema": {
       "type": "object",
@@ -1989,38 +1961,6 @@
         }
       },
       "required": ["kind"],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "set_project_var",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "description": "A variable name: letters, digits and underscores, not starting with GITHUB_."
-        },
-        "value": {
-          "type": "string",
-          "maxLength": 1024
-        },
-        "org": {
-          "description": "Org slug. Defaults to the caller's org; a token can only name its own.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "project": {
-          "description": "Project slug. Required unless the token is scoped to one project.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        }
-      },
-      "required": ["name", "value"],
       "additionalProperties": false
     }
   },

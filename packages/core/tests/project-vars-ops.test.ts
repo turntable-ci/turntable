@@ -277,4 +277,10 @@ describe("the instance administrator's set and delete", () => {
     for (const n of ["set_project_var_instance", "delete_project_var_instance"])
       expect(registry.ops.find((o) => o.name === n)?.mcp).toBe(false);
   });
+
+  test("an agent token can never write a variable: the project writes are off MCP and list is untrusted output", () => {
+    for (const n of ["set_project_var", "delete_project_var"])
+      expect(registry.ops.find((o) => o.name === n)?.mcp).toBe(false);
+    expect(registry.ops.find((o) => o.name === "list_project_vars")?.untrustedOutput).toBe(true);
+  });
 });

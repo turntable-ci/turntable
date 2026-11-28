@@ -238,8 +238,8 @@ export const SESSION_WRITE_OPS: ReadonlySet<string> = new Set([
   "notifications_ack",
   "set_notification_prefs",
 
-  // A project's non-secret `vars.*` from its settings page (#798): the ops' own `operator` role
-  // gates them, the values are plain text and the audit log keeps the name only. No step-up.
+  // A project's non-secret `vars.*` from its settings page (#798): the ops' own role
+  // gates them (release_operator, since the values reach protected runs), the values are plain text and the audit log keeps the name only. No step-up.
   "set_project_var",
   "delete_project_var",
   // Cancel and rerun from the run and job pages: audited, low-risk writes, gated by each op's own

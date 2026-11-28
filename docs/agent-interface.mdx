@@ -194,8 +194,8 @@ Every operation in the registry, as it is wired today. REST is the route under `
 | `resync_installation` | `POST /api/v1/github/installations/{installation_id}/resync` | yes |  | write | release_operator | token | Re-sync one GitHub App installation of this org with GitHub. |
 | `set_oidc_audiences` | `POST /api/v1/oidc-audiences` | no |  | write | admin | token | Limit the OIDC audiences a project's jobs may ask for, or lift the limit. |
 | `list_project_vars` | `GET /api/v1/project-vars` | yes |  | read | reader | token | List a project's workflow variables (`vars.*`). |
-| `set_project_var` | `POST /api/v1/project-vars` | yes |  | write | release_operator | token | Create or replace one workflow variable (`vars.NAME`) of a project. |
-| `delete_project_var` | `DELETE /api/v1/project-vars` | yes |  | destructive | release_operator | token | Delete one workflow variable of a project. |
+| `set_project_var` | `POST /api/v1/project-vars` | no |  | write | release_operator | token | Create or replace one workflow variable (`vars.NAME`) of a project. |
+| `delete_project_var` | `DELETE /api/v1/project-vars` | no |  | destructive | release_operator | token | Delete one workflow variable of a project. |
 | `set_project_var_instance` | none | no |  | write | admin | instance | Create or replace one workflow variable of any project (instance administrator only). |
 | `delete_project_var_instance` | none | no |  | destructive | admin | instance | Delete one workflow variable of any project (instance administrator only). |
 | `get_project_settings` | `GET /api/v1/project-settings` | yes |  | read | reader | token | A project's sandbox snapshot, concurrency cap and untrusted-run approval policy. |

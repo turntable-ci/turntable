@@ -136,7 +136,7 @@ export const listProjectVarsOp = defineOp({
   output: z.object({ vars: z.array(varView), next_cursor: nextCursor }),
   effect: "read",
   auth: { type: "token", minRole: "reader" },
-  untrustedOutput: false,
+  untrustedOutput: true,
   scope: "project",
   http: { method: "GET", path: "/project-vars" },
   async handler(ctx, i) {
@@ -177,6 +177,7 @@ export const setProjectVarOp = defineOp({
   untrustedOutput: false,
   scope: "project",
   logOmitFields: ["value"],
+  mcp: false,
   http: { method: "POST", path: "/project-vars" },
   async handler(ctx, i) {
     return setVar(ctx, requireScope(ctx), i);
@@ -197,6 +198,7 @@ export const deleteProjectVarOp = defineOp({
   auth: { type: "token", minRole: "release_operator" },
   untrustedOutput: false,
   scope: "project",
+  mcp: false,
   http: { method: "DELETE", path: "/project-vars" },
   async handler(ctx, i) {
     return deleteVar(ctx, requireScope(ctx), i);

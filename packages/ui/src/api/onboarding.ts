@@ -180,7 +180,7 @@ export interface OnboardingApi {
   previewWorkflows(args: { org: string; project: string }): Promise<WorkflowPreview>;
   /** `list_project_vars`: the project's non-secret `vars.*` (plain text). */
   listProjectVars(args: { org: string; project: string }): Promise<ProjectVar[]>;
-  /** `set_project_var`: create or replace one variable (an operator or above). */
+  /** `set_project_var`: create or replace one variable (a release operator or above). */
   setProjectVar(args: {
     org: string;
     project: string;
