@@ -1,7 +1,8 @@
 # STAGED (#809): the lane token cannot push .github/workflows. Move this file to
 # .github/workflows/default-image.yml as is. It builds images/ubuntu-24.04 on every change to it,
-# smoke-tests the built image, and on main only pushes it to GHCR by digest through the same
-# `release` environment and PUBLISH_FROM_GITHUB gate as the release image.
+# smoke-tests the built image, and on main builds, smoke-tests the local image by its ID digest and
+# only then tags and pushes it to GHCR, through the same `release` environment and
+# PUBLISH_FROM_GITHUB gate as the release image. A failing build or smoke test leaves nothing in GHCR.
 name: default-image
 
 on:
@@ -20,8 +21,9 @@ concurrency:
 
 jobs:
   build:
+    # Pull requests only: main goes through `publish`, which builds and smoke-tests the same way.
     # Not under Turntable: building an image needs Docker, which its sandboxes lack.
-    if: vars.TURNTABLE_CI != 'true'
+    if: github.event_name == 'pull_request' && vars.TURNTABLE_CI != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -37,7 +39,6 @@ jobs:
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.TURNTABLE_CI != 'true' && vars.PUBLISH_FROM_GITHUB == 'true'
-    needs: build
     # Publishes an image: gated by the same environment as the release image.
     environment: release
     runs-on: ubuntu-24.04
@@ -47,30 +48,34 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    env:
+      IMAGE: ghcr.io/turntable-ci/turntable-ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Built into the local Docker store only: nothing reaches GHCR until the smoke test passes.
+      - name: Build the image (local, not pushed)
+        run: docker build --iidfile "$RUNNER_TEMP/image-id" images/ubuntu-24.04
+      - name: Smoke test the built image by its digest
+        run: |
+          ID="$(cat "$RUNNER_TEMP/image-id")"
+          docker run --rm -v "$PWD/images/ubuntu-24.04/smoke.sh:/smoke.sh:ro" "$ID" bash /smoke.sh # pin-ok: the image ID built by the step above
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The tag is only a label for people; Turntable registers and runs the image by digest.
+      # Only now tag and push the image that passed. The tag is a label for people; Turntable
+      # registers and runs the image by digest.
       - id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: images/ubuntu-24.04
-          platforms: linux/amd64
-          push: true
-          tags: ghcr.io/turntable-ci/turntable-ubuntu-24.04:24.04-${{ github.sha }}
-      # Apt packages float within their major version, so the pushed build can differ from the one
-      # the build job tested: smoke-test the pushed digest itself before attesting or printing it.
-      - name: Smoke test the pushed digest
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: docker run --rm -v "$PWD/images/ubuntu-24.04/smoke.sh:/smoke.sh:ro" "ghcr.io/turntable-ci/turntable-ubuntu-24.04@${DIGEST}" bash /smoke.sh
+        run: |
+          ID="$(cat "$RUNNER_TEMP/image-id")"
+          TAG="${IMAGE}:24.04-${GITHUB_SHA}"
+          docker tag "$ID" "$TAG"
+          docker push "$TAG"
+          DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$TAG" | sed 's/.*@//')"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/turntable-ci/turntable-ubuntu-24.04
@@ -80,4 +85,4 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          echo "ghcr.io/turntable-ci/turntable-ubuntu-24.04@${DIGEST}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "${IMAGE}@${DIGEST}" | tee -a "$GITHUB_STEP_SUMMARY"

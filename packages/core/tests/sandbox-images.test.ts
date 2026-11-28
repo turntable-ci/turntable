@@ -7,7 +7,11 @@ import { FakeWorld } from "@turntable/provider-sdk/testing";
 import { systemOrgId } from "../src/audit/failures";
 import { type Db, getProjectSandboxSettings, listAudit } from "../src/db";
 import { deleteProjectCascade } from "../src/db/repos/project-delete";
-import { listSandboxImages } from "../src/db/repos/sandbox-images";
+import {
+  getSandboxImage,
+  listSandboxImages,
+  putSandboxImage,
+} from "../src/db/repos/sandbox-images";
 import { dispatch, type DispatchEnv, registry } from "../src/ops";
 import { createInstanceTokenFromCli } from "../src/ops/instance-token-cli";
 import { DEFAULT_IMAGE_NAME } from "../src/ops/definitions/sandbox-images";
@@ -154,6 +158,43 @@ describe("register_sandbox_image", () => {
     });
     const audit = await listAudit(db, a.scope);
     expect(audit.some((x) => x.op === "register_sandbox_image")).toBe(true);
+  });
+
+  test("get_project_settings refreshes a recorded state that is not ready", async () => {
+    await asInstance({
+      name: "img",
+      image: `${OURS}@${D1}`,
+      target_org: "org-a",
+      target_project: "app",
+    });
+    await putSandboxImage(db, { ...(await getSandboxImage(db, "img"))!, state: "pending" });
+    const provider = world.provider();
+    let state: "pending" | "ready" | "unavailable" = "unavailable";
+    const stale: DispatchEnv = {
+      registry,
+      db,
+      imageRegistrar: () => ({
+        provider: provider.info.name,
+        register: async (req) => ({ ...(await provider.registerImage!(req)), state }),
+      }),
+    };
+    const reader = await mintToken(db, a.scope, "reader");
+    const read = async () =>
+      (
+        out(
+          await dispatch(
+            stale,
+            { kind: "bearer", token: reader.secret },
+            "get_project_settings",
+            {},
+          ),
+        )?.sandbox_image as { state: string }
+      ).state;
+    expect(await read()).toBe("unavailable");
+    expect((await getSandboxImage(db, "img"))?.state).toBe("unavailable");
+    state = "ready";
+    expect(await read()).toBe("ready");
+    expect((await getSandboxImage(db, "img"))?.state).toBe("ready");
   });
 
   test("an unknown target project creates no snapshot; naming only one of the pair is refused", async () => {

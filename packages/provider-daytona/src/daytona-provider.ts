@@ -219,6 +219,13 @@ type OrgRoom =
       unit: string;
     };
 
+/** Daytona's snapshot state as ours: only `active` starts sandboxes; stopped or removing ones do not. */
+function snapshotState(s: string | undefined): "pending" | "ready" | "unavailable" {
+  if (s === "active") return "ready";
+  if (s === "inactive" || s === "removing") return "unavailable";
+  return "pending";
+}
+
 export class DaytonaProvider implements Provider {
   readonly info: ProviderInfo;
   readonly exec: Provider["exec"];
@@ -749,7 +756,7 @@ export class DaytonaProvider implements Provider {
     return {
       name: req.name,
       digest: pinned.digest,
-      state: snap.state === "active" ? "ready" : "pending",
+      state: snapshotState(snap.state),
     };
   }
 

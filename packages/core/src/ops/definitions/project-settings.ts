@@ -22,7 +22,7 @@ import { lockSettingKey } from "../../db/repos/settings";
 import { effectiveApproval, guardSettingChange } from "../setting-guard";
 import { defineOp, type OpContext } from "../define";
 import { OpError } from "../errors";
-import { getSandboxImage } from "../../db/repos/sandbox-images";
+import { getSandboxImage, putSandboxImage } from "../../db/repos/sandbox-images";
 import { imageView, sandboxImageShape } from "./sandbox-images";
 
 const EGRESS = ["none", "allowlist", "open"] as const;
@@ -53,9 +53,25 @@ const settingsShape = z.object({
     ),
 });
 
-async function imageOf(db: OpContext["db"], snapshot: string | null) {
+async function imageOf(ctx: OpContext, snapshot: string | null, refresh = false) {
   if (snapshot === null) return null;
-  const img = await getSandboxImage(db, snapshot);
+  let img = await getSandboxImage(ctx.db, snapshot);
+  if (img && refresh && img.state !== "ready") {
+    // A recorded state goes stale (built since, or stopped): ask the provider again. Registering
+    // the same name and digest is idempotent; a failure keeps the recorded state.
+    const registrar = ctx.imageRegistrar?.();
+    if (registrar && registrar.provider === img.provider) {
+      try {
+        const made = await registrar.register({ name: img.name, image: img.image });
+        if (made.digest === img.digest && made.state !== img.state) {
+          img = { ...img, state: made.state };
+          await putSandboxImage(ctx.db, img);
+        }
+      } catch {
+        // keep the recorded state
+      }
+    }
+  }
   return img ? imageView(img) : null;
 }
 
@@ -92,7 +108,7 @@ export const getProjectSettings = defineOp({
       project: ctx.scope.projectId,
       egress: await getProjectEgress(ctx.db, ctx.scope),
       sandbox_snapshot: s.sandboxSnapshot,
-      sandbox_image: await imageOf(ctx.db, s.sandboxSnapshot),
+      sandbox_image: await imageOf(ctx, s.sandboxSnapshot, true),
       max_concurrent: s.maxConcurrent,
       untrusted_run_approval: s.untrustedRunApproval,
     };
@@ -196,7 +212,7 @@ export const setProjectSettings = defineOp({
       project: project.id,
       egress: await getProjectEgress(ctx.db, scope),
       sandbox_snapshot: to.sandboxSnapshot,
-      sandbox_image: await imageOf(ctx.db, to.sandboxSnapshot),
+      sandbox_image: await imageOf(ctx, to.sandboxSnapshot),
       max_concurrent: to.maxConcurrent,
       untrusted_run_approval: to.untrustedRunApproval,
     };

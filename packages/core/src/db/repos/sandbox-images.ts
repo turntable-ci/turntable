@@ -19,7 +19,7 @@ export type SandboxImage = {
   digest: string;
   source: ImageSource;
   provider: string;
-  state: "pending" | "ready";
+  state: "pending" | "ready" | "unavailable";
   registeredBy: string;
   registeredAt: number;
 };

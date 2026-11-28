@@ -33,7 +33,11 @@ export const sandboxImageShape = z.object({
     .describe(
       "turntable: Turntable's own registry (ghcr.io/turntable-ci/); operator: a ref the operator chose.",
     ),
-  state: z.enum(["pending", "ready"]).describe("pending: the provider is still building it."),
+  state: z
+    .enum(["pending", "ready", "unavailable"])
+    .describe(
+      "pending: the provider is still building it; unavailable: it is stopped or being removed.",
+    ),
 });
 
 export function imageView(i: SandboxImage): z.infer<typeof sandboxImageShape> {

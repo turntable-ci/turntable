@@ -64,3 +64,19 @@ test("a snapshot that failed to build is refused, not recorded as pending", asyn
     p.registerImage({ name: "img", image: `${REPO}@${digest("a")}` }),
   ).rejects.toBeInstanceOf(SpecError);
 });
+
+test("a stopped or removing snapshot is unavailable, not pending", async () => {
+  const p = make();
+  await p.registerImage({ name: "img", image: `${REPO}@${digest("a")}` });
+  const api = (p as unknown as { api: { json: (...a: unknown[]) => Promise<unknown> } }).api;
+  const real = api.json.bind(api);
+  for (const state of ["inactive", "removing"]) {
+    api.json = async (method, path, ...rest) =>
+      method === "GET" && String(path).startsWith("/snapshots/")
+        ? { name: "img", state, imageName: `${REPO}@${digest("a")}` }
+        : real(method, path, ...rest);
+    expect(await p.registerImage({ name: "img", image: `${REPO}@${digest("a")}` })).toMatchObject({
+      state: "unavailable",
+    });
+  }
+});

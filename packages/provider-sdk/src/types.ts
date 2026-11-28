@@ -269,12 +269,15 @@ export interface ImageRegistrationRequest {
   resources?: SandboxResources;
 }
 
-/** What a provider made of a registration. `pending`: it is still building; `ready`: usable now. */
+/**
+ * What a provider made of a registration. `pending`: it is still building; `ready`: usable now;
+ * `unavailable`: it exists but cannot start a sandbox (stopped or being removed).
+ */
 export interface ImageRegistration {
   name: string;
   /** The digest the provider was given, `sha256:<64 hex>`. */
   digest: string;
-  state: "pending" | "ready";
+  state: "pending" | "ready" | "unavailable";
 }
 
 const PINNED_IMAGE =
