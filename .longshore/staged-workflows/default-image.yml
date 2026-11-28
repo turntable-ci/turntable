@@ -65,6 +65,12 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/turntable-ci/turntable-ubuntu-24.04:24.04-${{ github.sha }}
+      # Apt packages float within their major version, so the pushed build can differ from the one
+      # the build job tested: smoke-test the pushed digest itself before attesting or printing it.
+      - name: Smoke test the pushed digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: docker run --rm -v "$PWD/images/ubuntu-24.04/smoke.sh:/smoke.sh:ro" "ghcr.io/turntable-ci/turntable-ubuntu-24.04@${DIGEST}" bash /smoke.sh
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/turntable-ci/turntable-ubuntu-24.04

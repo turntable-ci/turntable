@@ -743,6 +743,9 @@ export class DaytonaProvider implements Provider {
       if (parsePinnedImage(snap.imageName ?? "")?.digest !== pinned.digest)
         throw new SpecError(`snapshot ${req.name} already exists with another image`);
     }
+    // A failed build is an answer, not a pending one: say so, so the operator sees it.
+    if (snap.state === "error" || snap.state === "build_failed")
+      throw new SpecError(`snapshot ${req.name} failed to build (state ${snap.state})`);
     return {
       name: req.name,
       digest: pinned.digest,

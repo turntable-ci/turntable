@@ -78,6 +78,12 @@ export const registerSandboxImage = defineOp({
   scope: "org",
   http: { method: "POST", path: "/instance/sandbox-images" },
   mcp: false,
+  // The provider call is a slow round trip (Daytona POST /snapshots, up to 60 s): it must not run
+  // inside the write transaction, which on SQLite blocks every other database user. The handler
+  // writes the record, the project pointer and the project audit row in one short transaction
+  // after the provider answers; the dispatcher audits the call itself afterwards.
+  outsideTransaction: true,
+  auditDetail: (o) => ({ digest: o.digest, state: o.state }),
   async handler(ctx, i) {
     if (!SNAPSHOT_NAME.test(i.name))
       throw new OpError(
@@ -158,31 +164,35 @@ export const registerSandboxImage = defineOp({
       registeredBy: ctx.principal.id,
       registeredAt: ctx.now(),
     };
-    await putSandboxImage(ctx.db, record);
-    if (target) {
-      const scope = { orgId: target.orgId, projectId: target.projectId };
-      const from = await getProjectSandboxSettings(ctx.db, scope);
-      await setProjectSandboxSettings(
-        ctx.db,
-        scope,
-        { sandboxSnapshot: i.name },
-        { id: ctx.principal.id, now: ctx.now() },
-      );
-      await appendAudit(ctx.db, scope, {
-        principalKind: "instance",
-        principalId: ctx.principal.id,
-        op: "register_sandbox_image",
-        effect: "write",
-        outcome: "ok",
-        input: {
-          target_org: target.orgSlug,
-          target_project: target.projectSlug,
-          name: i.name,
-          digest: pinned.digest,
-          from: from.sandboxSnapshot,
-        },
-      });
-    }
+    await ctx.db.transaction(
+      async (tx) => {
+        await putSandboxImage(tx, record);
+        if (!target) return;
+        const scope = { orgId: target.orgId, projectId: target.projectId };
+        const from = await getProjectSandboxSettings(tx, scope);
+        await setProjectSandboxSettings(
+          tx,
+          scope,
+          { sandboxSnapshot: i.name },
+          { id: ctx.principal.id, now: ctx.now() },
+        );
+        await appendAudit(tx, scope, {
+          principalKind: "instance",
+          principalId: ctx.principal.id,
+          op: "register_sandbox_image",
+          effect: "write",
+          outcome: "ok",
+          input: {
+            target_org: target.orgSlug,
+            target_project: target.projectSlug,
+            name: i.name,
+            digest: pinned.digest,
+            from: from.sandboxSnapshot,
+          },
+        });
+      },
+      target ? { lock: `audit:${target.orgId}` } : {},
+    );
     return { ...imageView(record), project: target?.projectId ?? null };
   },
 });

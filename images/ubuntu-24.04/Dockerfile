@@ -102,5 +102,5 @@ RUN set -eux; \
     "/usr/lib/postgresql/${POSTGRES_MAJOR}/bin/postgres" --version; redis-server --version; mysqld --version
 
 ENV TURNTABLE_IMAGE=turntable-ubuntu-24.04 \
-    PG_BIN=/usr/lib/postgresql/18/bin
+    PG_BIN=/usr/lib/postgresql/${POSTGRES_MAJOR}/bin
 WORKDIR /home/runner

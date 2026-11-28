@@ -211,3 +211,26 @@ describe("ubuntu-latest and ubuntu-24.04 map to the default image", () => {
     }
   });
 });
+
+describe("the provider call holds no write transaction", () => {
+  test("another transaction finishes while the registrar is still pending", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const provider = world.provider();
+    const slow: DispatchEnv = {
+      ...env,
+      imageRegistrar: () => ({
+        provider: provider.info.name,
+        register: async (req) => {
+          await gate;
+          return provider.registerImage!(req);
+        },
+      }),
+    };
+    const pending = asInstance({ name: "slow", image: `${OURS}@${D1}` }, slow);
+    await new Promise((r) => setTimeout(r, 20));
+    await db.transaction(async () => {});
+    release();
+    expect((await pending).ok).toBe(true);
+  });
+});

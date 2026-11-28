@@ -50,3 +50,17 @@ test("an image not pinned by digest is refused before any request", async () => 
     await expect(p.registerImage({ name: "img", image })).rejects.toBeInstanceOf(SpecError);
   expect(mock.requests.filter((q) => q.path === "/api/snapshots")).toEqual([]);
 });
+
+test("a snapshot that failed to build is refused, not recorded as pending", async () => {
+  const p = make();
+  await p.registerImage({ name: "img", image: `${REPO}@${digest("a")}` });
+  const api = (p as unknown as { api: { json: (...a: unknown[]) => Promise<unknown> } }).api;
+  const real = api.json.bind(api);
+  api.json = async (method, path, ...rest) =>
+    method === "GET" && String(path).startsWith("/snapshots/")
+      ? { name: "img", state: "build_failed", imageName: `${REPO}@${digest("a")}` }
+      : real(method, path, ...rest);
+  await expect(
+    p.registerImage({ name: "img", image: `${REPO}@${digest("a")}` }),
+  ).rejects.toBeInstanceOf(SpecError);
+});
