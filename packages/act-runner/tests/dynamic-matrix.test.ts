@@ -246,10 +246,10 @@ describe("expanding a dynamic matrix", () => {
     expect(out.legs.map((l) => l.matrix)).toEqual([{ os: "ubuntu-latest", k: 1 }]);
   });
 
-  test("an empty matrix skips the job", () => {
+  test("an empty matrix fails the job", () => {
     for (const m of ["{}", '{"include":[]}', '{"os":[]}']) {
       const out = expandDynamicMatrix(placeholder(whole), {}, needs(m));
-      expect(out.kind).toBe("empty");
+      expect(out).toEqual({ kind: "error", message: "Matrix vector does not contain any values" });
     }
   });
 

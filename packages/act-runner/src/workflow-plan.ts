@@ -586,15 +586,13 @@ function findExpression(v: unknown): string | undefined {
 
 export type DynamicExpansion =
   | { kind: "legs"; legs: PlannedJob[] }
-  /** The matrix has no combinations: GitHub skips the job. */
-  | { kind: "empty"; reason: string }
-  /** The matrix could not be built (bad JSON, wrong shape, over the limit): the job fails. */
+  /** The matrix could not be built (bad JSON, wrong shape, no combinations, over the limit): the job fails. */
   | { kind: "error"; message: string };
 
 /**
  * Expands a dynamic-matrix placeholder once its needs are done. `contexts` are the run's github,
  * vars, inputs and env; `needs` is the `needs` context (result and outputs per job id). Never
- * throws for a bad matrix: the outcome says whether to skip or fail the job. Each leg is the
+ * throws for a bad matrix: the outcome says why the job fails. Each leg is the
  * placeholder with its own key `id[n]`, matrix values, name, and the fields matrix values can
  * change (runs-on, continue-on-error).
  */
@@ -640,7 +638,7 @@ export function expandDynamicMatrix(
           message: `strategy.matrix has a key named "${k}" inside a combination; that name is reserved`,
         };
   if (combos.length === 0)
-    return { kind: "empty", reason: "matrix expanded to no jobs, so the job is skipped" };
+    return { kind: "error", message: "Matrix vector does not contain any values" };
   if (combos.length > MAX_MATRIX_COMBINATIONS)
     return {
       kind: "error",

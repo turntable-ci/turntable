@@ -1,7 +1,7 @@
 // Expands a queued job whose `strategy.matrix` is built from an expression, once its needs are
 // done: the placeholder row becomes the first leg, the others are new jobs with their own
 // queued attempts (so each gets its own check run), and jobs that waited on the placeholder now
-// wait on every leg. A matrix with no combinations skips the job; one that cannot be built fails it.
+// wait on every leg. A matrix that cannot be built, or has no combinations, fails the job.
 import { eq } from "drizzle-orm";
 import type { Db } from "..";
 import * as s from "../schema";
@@ -28,7 +28,6 @@ export type Expansion =
         planned: unknown;
       }[];
     }
-  | { kind: "empty"; reason: string }
   | { kind: "error"; message: string };
 
 /**
@@ -47,16 +46,6 @@ export async function applyExpansion(
   const note = async (text: string): Promise<void> => {
     if (live) await appendLog(db, scope, live.id, 0, new TextEncoder().encode(`${text}\n`));
   };
-  if (expansion.kind === "empty") {
-    await transitionJob(db, scope, job.id, "skipped");
-    if (live)
-      await updateAttempt(db, scope, live.id, {
-        state: "skipped",
-        errorClass: `skipped: ${expansion.reason}`.slice(0, 200),
-      });
-    await note(`skipped: ${expansion.reason}`);
-    return "done";
-  }
   if (expansion.kind === "error") {
     // The job stays queued and is claimed as it is, marked unsupported: the runner ends it as a
     // failure with this reason, like any job that cannot run, so it has a check run and never

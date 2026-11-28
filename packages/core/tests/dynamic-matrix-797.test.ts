@@ -1,5 +1,5 @@
 // #797: a job whose matrix is `fromJSON(needs.x.outputs.m)` expands once x finishes, into one job
-// per combination, each with its own check run; an empty matrix skips, bad JSON fails.
+// per combination, each with its own check run; an empty matrix and bad JSON fail.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { planWorkflow } from "@turntable/act-runner";
 import {
@@ -151,17 +151,18 @@ describe("#797 dynamic matrix at run time", () => {
     expect(JSON.parse(done.needs)).toEqual(["test[0]", "test[1]"]);
   });
 
-  test("an empty matrix skips the job, and its dependent sees skipped", async () => {
+  test("an empty matrix fails the job, and its dependent sees the failure", async () => {
     const { api } = fakeApi();
     const run = await makeRun();
     await drive('{"include":[]}', new CheckReporter({ db, auth, api, sleep: async () => {} }));
     const jobs = await listJobs(db, world.scope, run.id);
     expect(Object.fromEntries(jobs.map((j) => [j.jobKey, j.state]))).toEqual({
       changes: "success",
-      test: "skipped",
+      test: "failure",
       // `if: always()` runs it regardless.
       done: "success",
     });
+    expect(reasons.get("test")).toBe("unsupported: Matrix vector does not contain any values");
   });
 
   test("invalid JSON fails the job with a clear message", async () => {

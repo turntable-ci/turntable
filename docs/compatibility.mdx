@@ -31,7 +31,7 @@ Steps see the event as they do on GitHub where it matters: act is given a `githu
 | Triggers: `workflow_dispatch` | Supported through the `run_dispatch` operation (REST and MCP), see [Manual runs](#manual-runs-workflow_dispatch) |
 | Triggers: `schedule` | Not ingested yet |
 | `needs`, job outputs, `matrix` (with `fail-fast` and `max-parallel`), `if:`, `continue-on-error` | Supported |
-| `matrix` built from `fromJSON(needs.<job>.outputs.<name>)` | Supported. The job expands when its needs finish, with GitHub's `include` and `exclude` rules and a limit of 256 combinations. An empty matrix skips the job; invalid JSON or more than 256 combinations fails it. |
+| `matrix` built from `fromJSON(needs.<job>.outputs.<name>)` | Supported. The job expands when its needs finish, with GitHub's `include` and `exclude` rules and a limit of 256 combinations. An empty matrix fails the job with "Matrix vector does not contain any values", as on GitHub; so do invalid JSON and more than 256 combinations. |
 | `concurrency` | Supported with differences: groups are scoped to the repo, and a pull request run's group is rewritten so it cannot cancel the default branch, see [Security](/security#trust-classes-and-fork-pr-gating) |
 | Composite and JavaScript actions | Supported, resolved to a commit sha before the run, see [Security](/security#action-pins-and-moved-tags) |
 | `GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY` | Handled by act |
