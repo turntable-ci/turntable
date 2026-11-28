@@ -44,15 +44,23 @@ function shellSplit(input: string): string[] {
     if (quote === "'") {
       if (c === "'") quote = null;
       else cur += c;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+      else if (c === "\\" && i + 1 < input.length) {
+        // shellquote: inside double quotes a backslash escapes only $ ` " \ and newline, else it stays
+        const next = input[i + 1] as string;
+        if (next === "$" || next === "`" || next === '"' || next === "\\") {
+          cur += next;
+          i++;
+        } else if (next === "\n") i++;
+        else cur += c;
+      } else cur += c;
     } else if (c === "\\" && i + 1 < input.length) {
       const next = input[++i] as string;
       if (next !== "\n") {
         cur += next;
         has = true;
       } // a backslash-newline is dropped, as shellquote does
-    } else if (quote === '"') {
-      if (c === '"') quote = null;
-      else cur += c;
     } else if (c === "'" || c === '"') {
       quote = c;
       has = true;
