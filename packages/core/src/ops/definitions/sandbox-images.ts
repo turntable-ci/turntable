@@ -199,7 +199,14 @@ export const registerSandboxImage = defineOp({
       },
       target ? { lock: `audit:${target.orgId}` } : {},
     );
-    if (projectGone) throw new OpError("not_found", "no such project");
+    if (projectGone) {
+      // The snapshot exists and is recorded: say so in the instance audit row.
+      throw new OpError("not_found", "no such project", {
+        digest: pinned.digest,
+        state: made.state,
+        recorded: true,
+      });
+    }
     return { ...imageView(record), project: target?.projectId ?? null };
   },
 });

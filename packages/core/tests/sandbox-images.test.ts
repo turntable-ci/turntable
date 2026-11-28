@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parsePinnedImage } from "@turntable/provider-sdk";
 import { FakeWorld } from "@turntable/provider-sdk/testing";
 import { type Db, getProjectSandboxSettings, listAudit } from "../src/db";
+import { deleteProjectCascade } from "../src/db/repos/project-delete";
 import { listSandboxImages } from "../src/db/repos/sandbox-images";
 import { dispatch, type DispatchEnv, registry } from "../src/ops";
 import { createInstanceTokenFromCli } from "../src/ops/instance-token-cli";
@@ -165,6 +166,34 @@ describe("register_sandbox_image", () => {
     const r2 = await asInstance({ name: "img", image: `${OURS}@${D1}`, target_org: "org-a" });
     expect(!r2.ok && r2.error.code).toBe("invalid_input");
     expect(world.images.size).toBe(0);
+  });
+
+  test("a project deleted while the provider call runs gets not_found; the record is kept and the instance audit says so", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const provider = world.provider();
+    const gated: DispatchEnv = {
+      ...env,
+      imageRegistrar: () => ({
+        provider: provider.info.name,
+        register: async (req) => {
+          await gate;
+          return provider.registerImage!(req);
+        },
+      }),
+    };
+    const pending = asInstance(
+      { name: "gone", image: `${OURS}@${D1}`, target_org: "org-a", target_project: "app" },
+      gated,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    await deleteProjectCascade(db, { orgId: a.scope.orgId }, a.scope.projectId!);
+    release();
+    const r = await pending;
+    expect(!r.ok && r.error.code).toBe("not_found");
+    expect((await listSandboxImages(db)).map((x) => x.name)).toContain("gone");
+    const audit = await listAudit(db, a.scope);
+    expect(audit.some((x) => x.op === "register_sandbox_image")).toBe(false);
   });
 
   test("a project snapshot not registered through Turntable shows no sandbox_image", async () => {

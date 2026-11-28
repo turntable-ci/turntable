@@ -19,7 +19,10 @@ set -euo pipefail
 DATA="${TURNTABLE_SVC_DATA:-/var/lib/turntable-svc}"
 RUN_DIR="${TURNTABLE_SVC_RUN:-/var/run/turntable-svc}"
 SVC_USER="${TURNTABLE_SVC_USER:-runner}"
-PG_BIN="${PG_BIN:-/usr/lib/postgresql/18/bin}"
+# sudo resets the environment, so without PG_BIN use the newest installed major.
+if [ -z "${PG_BIN:-}" ]; then
+  PG_BIN="$(printf '%s\n' /usr/lib/postgresql/*/bin | sort -V | tail -n 1)"
+fi
 WAIT_SECONDS="${TURNTABLE_SVC_WAIT:-60}"
 
 die() {
@@ -112,10 +115,13 @@ start_mysql() {
   wait_for mysql mysqladmin --socket="$sock" -u root ping
   if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
     mysql --socket="$sock" -u root -e \
-      "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null || true
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null ||
+      MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --socket="$sock" -u root -e "SELECT 1" >/dev/null 2>&1 ||
+      die "mysql: could not set the root password (see $DATA/mysql.log)"
   else
     mysql --socket="$sock" -u root -e \
-      "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null || true
+      "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null ||
+      die "mysql: could not create the root@127.0.0.1 user (see $DATA/mysql.log)"
   fi
   if [ -n "${MYSQL_DATABASE:-}" ]; then
     MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-}" mysql --socket="$sock" -u root -e \
