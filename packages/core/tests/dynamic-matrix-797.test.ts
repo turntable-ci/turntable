@@ -180,6 +180,20 @@ describe("#797 dynamic matrix at run time", () => {
     );
   });
 
+  test("a deeply nested needs output fails the job and the needed job still finishes", async () => {
+    const { api } = fakeApi();
+    const run = await makeRun();
+    const depth = 30_000;
+    const nested = `{"a":${"[".repeat(depth)}${"]".repeat(depth)}}`;
+    await drive(nested, new CheckReporter({ db, auth, api, sleep: async () => {} }));
+    const jobs = await listJobs(db, world.scope, run.id);
+    expect(jobs.find((j) => j.jobKey === "test")!.state).toBe("failure");
+    expect(reasons.get("test")).toContain("nested");
+    expect(jobs.find((j) => j.jobKey !== "test" && !j.jobKey.startsWith("test["))!.state).toBe(
+      "success",
+    );
+  });
+
   test("every leg keeps the placeholder's approval kind", async () => {
     for (const kind of ["untrusted_author", "environment"] as const) {
       const { api } = fakeApi();

@@ -616,6 +616,34 @@ export const MAX_DYNAMIC_LEG_BYTES = 16 * 1024;
 /** A leg's job name is cut to this many characters (check run names come from it). */
 export const MAX_LEG_NAME_LENGTH = 256;
 
+export const MAX_DYNAMIC_MATRIX_DEPTH = 16;
+const MAX_DYNAMIC_MATRIX_NODES = 20_000;
+
+/**
+ * Walks a resolved matrix iteratively and says why it is too big to expand, or undefined. Bounds
+ * nesting depth, node count and the union of include keys (includes naming no axis are merged
+ * into every combination, so many wide includes would make every leg large).
+ */
+function matrixShapeProblem(v: unknown): string | undefined {
+  const stack: Array<[unknown, number]> = [[v, 0]];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const [x, depth] = stack.pop() as [unknown, number];
+    if (++nodes > MAX_DYNAMIC_MATRIX_NODES) return "strategy.matrix has too many values";
+    if (depth > MAX_DYNAMIC_MATRIX_DEPTH)
+      return `strategy.matrix is nested deeper than ${MAX_DYNAMIC_MATRIX_DEPTH} levels`;
+    if (Array.isArray(x)) for (const y of x) stack.push([y, depth + 1]);
+    else if (isObj(x)) for (const y of Object.values(x)) stack.push([y, depth + 1]);
+  }
+  if (isObj(v) && Array.isArray(v.include)) {
+    const keys = new Set<string>();
+    for (const inc of v.include) if (isObj(inc)) for (const k of Object.keys(inc)) keys.add(k);
+    if (keys.size > MAX_DYNAMIC_MATRIX_KEYS)
+      return `strategy.matrix include entries name more than ${MAX_DYNAMIC_MATRIX_KEYS} distinct keys`;
+  }
+  return undefined;
+}
+
 export type DynamicExpansion =
   | { kind: "legs"; legs: PlannedJob[] }
   /** The matrix could not be built (bad JSON, wrong shape, no combinations, over the limit): the job fails. */
@@ -647,6 +675,10 @@ export function expandDynamicMatrix(
         kind: "error",
         message: `strategy.matrix did not evaluate to an object (got ${Array.isArray(resolved) ? "a list" : typeof resolved})`,
       };
+    // Check depth and size without recursing first: a deeply nested value would overflow the
+    // stack in findExpression and JSON.stringify.
+    const shape = matrixShapeProblem(resolved);
+    if (shape !== undefined) return { kind: "error", message: shape };
     const bad = findExpression(resolved);
     if (bad !== undefined)
       return {
@@ -669,6 +701,8 @@ export function expandDynamicMatrix(
   } catch (e) {
     if (e instanceof ExprError || e instanceof PlanError)
       return { kind: "error", message: `strategy.matrix is not valid: ${e.message}` };
+    if (e instanceof RangeError)
+      return { kind: "error", message: "strategy.matrix is nested too deeply or is too large" };
     throw e;
   }
   for (const c of combos)

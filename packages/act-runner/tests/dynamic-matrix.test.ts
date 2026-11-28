@@ -189,6 +189,21 @@ describe("expanding a dynamic matrix", () => {
     expect(out.legs.every((l) => l.needsIds[0] === "x" && l.id === "build")).toBe(true);
   });
 
+  test("a deeply nested value fails the job instead of throwing", () => {
+    const depth = 30_000;
+    const nested = `{"a":${"[".repeat(depth)}${"]".repeat(depth)}}`;
+    const out = expandDynamicMatrix(placeholder(whole), {}, needs(nested));
+    expect(out.kind).toBe("error");
+    if (out.kind === "error") expect(out.message).toContain("nested");
+  });
+
+  test("includes naming many distinct keys fail early", () => {
+    const include = Array.from({ length: 70 }, (_, i) => ({ [`k${i}`]: 1 }));
+    const out = expandDynamicMatrix(placeholder(whole), {}, needs(JSON.stringify({ include })));
+    expect(out.kind).toBe("error");
+    if (out.kind === "error") expect(out.message).toContain("distinct keys");
+  });
+
   test("include and exclude inside the JSON", () => {
     const out = expandDynamicMatrix(
       placeholder(whole),
