@@ -1,8 +1,6 @@
-# STAGED (#809): the lane token cannot push .github/workflows. Move this file to
-# .github/workflows/default-image.yml as is. It builds images/ubuntu-24.04 on every change to it,
-# smoke-tests the built image, and on main builds, smoke-tests the local image by its ID digest and
-# only then tags and pushes it to GHCR, through the same `release` environment and
-# PUBLISH_FROM_GITHUB gate as the release image. A failing build or smoke test leaves nothing in GHCR.
+# Builds images/ubuntu-24.04 on every change to it and smoke-tests the result. On main it builds,
+# smoke-tests the local image by its ID digest, and only then tags and pushes it to GHCR, through the
+# same `release` environment and PUBLISH_FROM_GITHUB gate as the release image (#809).
 name: default-image
 
 on:
