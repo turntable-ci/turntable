@@ -498,6 +498,18 @@ describe("only ever our own sandboxes", () => {
     expect(mock.requests.some((r) => r.path.startsWith("/toolbox/"))).toBe(false);
   });
 
+  test("a sandbox we created is destroyed by id even before its labels apply (#814)", async () => {
+    const p = make();
+    const h = await p.create(spec());
+    mock.sandboxes.get(h.id)!.labels = {}; // the label has not applied yet
+    await p.destroy(h.id);
+    expect(mock.sandboxes.get(h.id)?.state ?? "destroyed").toBe("destroyed");
+    // The guard still holds for an id we did not create, labelled or not.
+    const other = await make().create(spec());
+    mock.sandboxes.get(other.id)!.labels = {};
+    await expect(p.destroy(other.id)).rejects.toBeInstanceOf(SpecError);
+  });
+
   test("destroy of a missing sandbox succeeds; destroyByLabels needs labels", async () => {
     const p = make();
     await p.destroy("nope");

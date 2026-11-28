@@ -200,7 +200,8 @@ export function classifyInfra(reason: string | undefined): InfraClass {
   }
   if (r.includes("not found at")) return "workflow_missing";
   if (/timeout|timed out|deadline/.test(r)) return "timeout";
-  if (/lost|controller_lost|probe|no exec|exec status/.test(r)) return "exec_lost";
+  if (/lost|controller_lost|probe|no exec|exec status|failed to resolve container ip/.test(r))
+    return "exec_lost";
   if (/cannot prepare sandbox|sandbox.*(create|start|fail)|create.*sandbox/.test(r)) {
     return "sandbox_create_failed";
   }

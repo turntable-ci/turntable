@@ -14,6 +14,11 @@ import {
 } from "@turntable/act-runner";
 import type { Provider, ProxyEndpoint, SandboxResources } from "@turntable/provider-sdk";
 import { Redactor, SecretRegistry, redactString } from "@turntable/redact";
+import {
+  isCreateTimeout,
+  isSandboxLostMessage,
+  processCreateStats,
+} from "../scheduler/create-stats";
 import { type ErrorDetail, errorDetailOf } from "../scheduler/error-detail";
 import { renderEvent, stepLabel } from "./render";
 import type { JobIds, RunStore, StepRecord } from "./store";
@@ -317,6 +322,7 @@ export async function executeJob(
             : { egress: env.egress ?? "none" },
       });
       creating = false;
+      processCreateStats.record(env.provider.info.name, false);
       sandboxId = sb.id;
       // A provider with its own cap (Daytona) may end the sandbox sooner than asked: that is how
       // long it can outlive the attempt, so the quota grace follows it.
@@ -473,12 +479,20 @@ export async function executeJob(
     }
   } catch (e) {
     if (cancelled) return await settle("cancelled", "cancelled by user");
+    const message = e instanceof Error ? e.message : String(e);
+    if (creating) processCreateStats.record(env.provider.info.name, isCreateTimeout(message));
     return await settle(
       "infra_error",
-      e instanceof Error ? e.message : String(e),
+      message,
       undefined,
       undefined,
-      creating ? "sandbox_create_failed" : "unknown",
+      // A sandbox that vanished before it could be reached (Daytona: "failed to resolve container
+      // IP ... Is the Sandbox started?", #814) is a lost sandbox, not an unknown error.
+      creating
+        ? "sandbox_create_failed"
+        : isSandboxLostMessage(message)
+          ? "sandbox_lost"
+          : "unknown",
       errorDetailOf(e),
     );
   } finally {

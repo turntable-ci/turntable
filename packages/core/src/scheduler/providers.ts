@@ -122,6 +122,7 @@ const DAYTONA_KEYS = new Set([
   "target",
   "ttlSeconds",
   "capacityWaitSeconds",
+  "createTimeoutSeconds",
   "ownerCiPreflight",
   "quotaMode",
   "fleet",
@@ -268,6 +269,7 @@ function createDaytona(
   const maxLive = int(config, "maxLive", 1, HARD_MAX_LIVE);
   const ttl = int(config, "ttlSeconds", 60, 1800);
   const wait = int(config, "capacityWaitSeconds", 1, 3600);
+  const createTimeout = int(config, "createTimeoutSeconds", 10, 1800);
   return new DaytonaProvider({
     apiKey: keyFile !== undefined ? { file: keyFile } : { env: keyEnv },
     ...(baseUrl ? { baseUrl } : {}),
@@ -276,6 +278,7 @@ function createDaytona(
     ...(fleet ? { fleet } : {}),
     ...(maxLive !== undefined ? { maxLive } : {}),
     ...(wait !== undefined ? { capacityWaitMs: wait * 1000 } : {}),
+    ...(createTimeout !== undefined ? { createTimeoutMs: createTimeout * 1000 } : {}),
     // The scheduler asks for job timeout plus slack, usually past 30 minutes: clamp instead of
     // refusing so jobs still run; the sandbox is reaped at the cap either way.
     // Off unless the operator says so: a domain list rests on Daytona's filter reading the TLS
