@@ -117,8 +117,9 @@ start_mysql() {
     # MySQL string literals escape both the quote and the backslash.
     local pw="${MYSQL_ROOT_PASSWORD//\\/\\\\}"
     pw="${pw//\'/\'\'}"
-    mysql --socket="$sock" -u root -e \
-      "ALTER USER 'root'@'localhost' IDENTIFIED BY '$pw'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$pw'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>>"$DATA/mysql-init.log" ||
+    # The SQL goes in on stdin so the password never shows in the process list.
+    printf '%s\n' "ALTER USER 'root'@'localhost' IDENTIFIED BY '$pw'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$pw'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" |
+      mysql --socket="$sock" -u root 2>>"$DATA/mysql-init.log" ||
       MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --socket="$sock" -u root -e "SELECT 1" >/dev/null 2>&1 ||
       die "mysql: could not set the root password (see $DATA/mysql-init.log)"
   else

@@ -94,7 +94,8 @@ RUN set -eux; \
     useradd -m -u 1001 -s /bin/bash runner; \
     echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner; \
     chmod 0440 /etc/sudoers.d/runner; \
-    install -d -o runner -g runner -m 0755 /var/lib/turntable-svc /var/run/turntable-svc; \
+    install -d -o runner -g runner -m 0755 /var/lib/turntable-svc /var/run/turntable-svc /opt/uv-python; \
+    chown -R runner:runner /opt/uv-python; \
     chmod 1777 /var/run/postgresql /var/run/mysqld 2>/dev/null || install -d -m 1777 /var/run/postgresql /var/run/mysqld; \
     git --version; gh --version | head -1; jq --version; zstd --version; \
     node --version; npm --version; bun --version; uv --version; python3 --version; \
