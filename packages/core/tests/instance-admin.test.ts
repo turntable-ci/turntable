@@ -202,53 +202,55 @@ describe("no org principal reaches an instance op, and the instance token reache
       for (const { label, cred } of await orgCreds(t)) {
         for (const op of registry.instanceOps()) {
           const input =
-            op.name === "set_quotas"
-              ? { target_org: "org-a", max_log_bytes: 1 }
-              : op.name === "set_project_pr_policy"
-                ? { target_org: "org-a", target_project: "app", pr_mode: "off" }
-                : op.name === "set_project_egress"
-                  ? { target_org: "org-a", target_project: "app", egress: "open" }
-                  : op.name === "set_project_settings"
-                    ? { target_org: "org-a", target_project: "app", max_concurrent: 1 }
-                    : op.name === "instance_set_setting"
-                      ? { key: "backup_keep", value: 1 }
-                      : op.name === "bootstrap_approver"
-                        ? { target_org: "org-a", person: "x", forge_login: "x", public_key: "k" }
-                        : op.name === "create_project"
-                          ? { target_org: "org-a", slug: "sneaky", name: "x" }
-                          : op.name === "create_org"
-                            ? { slug: "sneaky-org", name: "x" }
-                            : op.name === "instance_bind_github_login"
-                              ? {
-                                  target_org: "org-a",
-                                  github_login: "x",
-                                  role: "viewer",
-                                  reason: "x",
-                                }
-                              : op.name === "instance_start_installation_claim"
-                                ? { target_org: "org-a", github_login: "x", reason: "x" }
-                                : op.name === "instance_bind_installation"
-                                  ? {
-                                      installation_id: "1",
-                                      target_org: "org-a",
-                                      expected_account: "x",
-                                      reason: "x",
-                                    }
-                                  : op.name === "move_repo_binding"
+            op.name === "set_project_var_instance" || op.name === "delete_project_var_instance"
+              ? { target_org: "org-a", target_project: "app", name: "VITE_X", value: "1" }
+              : op.name === "set_quotas"
+                ? { target_org: "org-a", max_log_bytes: 1 }
+                : op.name === "set_project_pr_policy"
+                  ? { target_org: "org-a", target_project: "app", pr_mode: "off" }
+                  : op.name === "set_project_egress"
+                    ? { target_org: "org-a", target_project: "app", egress: "open" }
+                    : op.name === "set_project_settings"
+                      ? { target_org: "org-a", target_project: "app", max_concurrent: 1 }
+                      : op.name === "instance_set_setting"
+                        ? { key: "backup_keep", value: 1 }
+                        : op.name === "bootstrap_approver"
+                          ? { target_org: "org-a", person: "x", forge_login: "x", public_key: "k" }
+                          : op.name === "create_project"
+                            ? { target_org: "org-a", slug: "sneaky", name: "x" }
+                            : op.name === "create_org"
+                              ? { slug: "sneaky-org", name: "x" }
+                              : op.name === "instance_bind_github_login"
+                                ? {
+                                    target_org: "org-a",
+                                    github_login: "x",
+                                    role: "viewer",
+                                    reason: "x",
+                                  }
+                                : op.name === "instance_start_installation_claim"
+                                  ? { target_org: "org-a", github_login: "x", reason: "x" }
+                                  : op.name === "instance_bind_installation"
                                     ? {
-                                        owner: "acme",
-                                        repo: "api",
-                                        to_org: "org-a",
-                                        to_project: "app",
+                                        installation_id: "1",
+                                        target_org: "org-a",
+                                        expected_account: "x",
+                                        reason: "x",
                                       }
-                                    : op.name === "create_org_token"
+                                    : op.name === "move_repo_binding"
                                       ? {
-                                          target_org: "org-a",
-                                          name: "x",
-                                          role: "reader",
-                                          expires_days: 1,
+                                          owner: "acme",
+                                          repo: "api",
+                                          to_org: "org-a",
+                                          to_project: "app",
                                         }
-                                      : {};
+                                      : op.name === "create_org_token"
+                                        ? {
+                                            target_org: "org-a",
+                                            name: "x",
+                                            role: "reader",
+                                            expires_days: 1,
+                                          }
+                                        : {};
           const r = await dispatch(env, cred, op.name, input);
           expect(r.ok, `${label} on ${op.name}`).toBe(false);
           if (!r.ok) expect(r.error.code, `${label} on ${op.name}`).toBe("forbidden");
@@ -271,6 +273,7 @@ describe("no org principal reaches an instance op, and the instance token reache
       "create_org_token",
       "create_project",
       "db_backup",
+      "delete_project_var_instance",
       "instance_audit_verify",
       "instance_bind_github_login",
       "instance_bind_installation",
@@ -301,6 +304,7 @@ describe("no org principal reaches an instance op, and the instance token reache
       "set_project_egress",
       "set_project_pr_policy",
       "set_project_settings",
+      "set_project_var_instance",
       "set_quotas",
     ]);
     expect((await listProjects(db, { orgId: a.orgId })).map((p) => p.slug)).toEqual(["app"]);

@@ -42,3 +42,4 @@ packages/core/tests/checks-superseded-race-648.test.ts
 packages/core/tests/approval-default-solo.test.ts
 packages/core/tests/approval-default-backfill.test.ts
 packages/core/tests/dynamic-matrix-797.test.ts
+packages/core/tests/project-vars-ops.test.ts
