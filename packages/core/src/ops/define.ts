@@ -19,6 +19,13 @@ import type { SettingsRuntime } from "../settings/resolve";
 import type { AppAuth } from "../github/app-auth";
 import type { Principal } from "./principal";
 import type { Role } from "./roles";
+import type { ImageRegistration, ImageRegistrationRequest } from "@turntable/provider-sdk";
+
+/** The instance's provider's `registerImage`, with the provider's name for the record. */
+export type ImageRegistrar = {
+  provider: string;
+  register(req: ImageRegistrationRequest): Promise<ImageRegistration>;
+};
 
 /** What an operation does to the world. Drives MCP annotations and audit. */
 export type Effect = "read" | "write" | "destructive";
@@ -66,6 +73,11 @@ export type OpContext = {
   transport?: "mcp" | "rest" | undefined;
   /** Egress modes the instance's sandbox provider can enforce; absent when this process has no provider (web-only). */
   providerEgress?: (() => readonly string[] | undefined) | undefined;
+  /**
+   * Registers a digest-pinned image as a provider snapshot (`register_sandbox_image`, #809);
+   * absent when this process has no provider or the provider cannot register images.
+   */
+  imageRegistrar?: (() => ImageRegistrar | undefined) | undefined;
   /** The instance's per-org concurrency cap, for the instance ops that clamp to it. */
   instanceOrgCap?: number | undefined;
   /** `org-slug/project-slug` pairs the running poll config names statically; empty when none. */

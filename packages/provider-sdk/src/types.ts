@@ -254,6 +254,46 @@ export interface ProviderCheck {
   fix?: string;
 }
 
+/**
+ * An image the operator asked the provider to register as a named snapshot. `image` is always
+ * pinned by digest (`repo@sha256:<64 hex>`, a tag before the `@` is ignored): a tag can be moved
+ * by whoever controls the registry, a digest cannot. Sandboxes then start from `name`; the image
+ * is never pulled by tag at run time.
+ */
+export interface ImageRegistrationRequest {
+  /** The snapshot name sandboxes will start from: letters, digits, `.`, `_`, `-`. */
+  name: string;
+  /** The registry image, pinned by digest. */
+  image: string;
+  /** Resources the snapshot is built with, where the provider sizes snapshots (Daytona). */
+  resources?: SandboxResources;
+}
+
+/**
+ * What a provider made of a registration. `pending`: it is still building; `ready`: usable now;
+ * `unavailable`: it exists but cannot start a sandbox (stopped or being removed).
+ */
+export interface ImageRegistration {
+  name: string;
+  /** The digest the provider was given, `sha256:<64 hex>`. */
+  digest: string;
+  state: "pending" | "ready" | "unavailable";
+}
+
+const PINNED_IMAGE =
+  /^((?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-f]{64})$/;
+
+/**
+ * Splits an image reference pinned by digest into its repository and digest, or returns
+ * undefined for anything else (a bare tag, an uppercase name, a short or foreign digest). The
+ * repository keeps its registry host, and any tag is dropped: the digest is what is pulled.
+ */
+export function parsePinnedImage(ref: string): { repository: string; digest: string } | undefined {
+  if (ref.length > 512) return undefined;
+  const m = PINNED_IMAGE.exec(ref);
+  return m ? { repository: m[1]!, digest: m[2]! } : undefined;
+}
+
 export interface Provider {
   readonly info: ProviderInfo;
   healthcheck(): Promise<void>;
@@ -287,6 +327,14 @@ export interface Provider {
     cls: SandboxResources,
     specific: ProviderClassSettings | undefined,
   ): ClassRealisation;
+  /**
+   * Registers a digest-pinned registry image as a named snapshot sandboxes can start from (#809).
+   * Called only by the instance operator's `register_sandbox_image`; nothing at run time calls
+   * it. It must refuse an image not pinned by digest (`parsePinnedImage`) with a `SpecError`, and
+   * must not put a credential in an error. A provider that starts from images directly need not
+   * implement it.
+   */
+  registerImage?(req: ImageRegistrationRequest): Promise<ImageRegistration>;
   exec: ProviderExec;
   files: ProviderFiles;
 }

@@ -12203,6 +12203,43 @@
                       "description": "The provider snapshot this project's sandboxes start from; null is the default.",
                       "type": ["string", "null"]
                     },
+                    "sandbox_image": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "The provider snapshot sandboxes start from."
+                            },
+                            "image": {
+                              "type": "string",
+                              "description": "The registry image it was made from: repository@sha256:..."
+                            },
+                            "digest": {
+                              "type": "string",
+                              "description": "The image digest, sha256:<64 hex>."
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": ["turntable", "operator"],
+                              "description": "turntable: Turntable's own registry (ghcr.io/turntable-ci/); operator: a ref the operator chose."
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": ["pending", "ready", "unavailable"],
+                              "description": "pending: the provider is still building it; unavailable: it is stopped or being removed."
+                            }
+                          },
+                          "required": ["name", "image", "digest", "source", "state"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The registered image behind `sandbox_snapshot` (`register_sandbox_image`): its digest-pinned ref. Null when no snapshot is set or it was not registered through Turntable."
+                    },
                     "max_concurrent": {
                       "anyOf": [
                         {
@@ -12226,6 +12263,7 @@
                     "project",
                     "egress",
                     "sandbox_snapshot",
+                    "sandbox_image",
                     "max_concurrent",
                     "untrusted_run_approval"
                   ],
@@ -18382,6 +18420,43 @@
                       "description": "The provider snapshot this project's sandboxes start from; null is the default.",
                       "type": ["string", "null"]
                     },
+                    "sandbox_image": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "The provider snapshot sandboxes start from."
+                            },
+                            "image": {
+                              "type": "string",
+                              "description": "The registry image it was made from: repository@sha256:..."
+                            },
+                            "digest": {
+                              "type": "string",
+                              "description": "The image digest, sha256:<64 hex>."
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": ["turntable", "operator"],
+                              "description": "turntable: Turntable's own registry (ghcr.io/turntable-ci/); operator: a ref the operator chose."
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": ["pending", "ready", "unavailable"],
+                              "description": "pending: the provider is still building it; unavailable: it is stopped or being removed."
+                            }
+                          },
+                          "required": ["name", "image", "digest", "source", "state"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "The registered image behind `sandbox_snapshot` (`register_sandbox_image`): its digest-pinned ref. Null when no snapshot is set or it was not registered through Turntable."
+                    },
                     "max_concurrent": {
                       "anyOf": [
                         {
@@ -18405,9 +18480,138 @@
                     "project",
                     "egress",
                     "sandbox_snapshot",
+                    "sandbox_image",
                     "max_concurrent",
                     "untrusted_run_approval"
                   ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidInput"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-turntable-effect": "write",
+        "x-turntable-instance-only": true,
+        "x-turntable-untrusted-output": false
+      }
+    },
+    "/instance/sandbox-images": {
+      "post": {
+        "operationId": "register_sandbox_image",
+        "summary": "Register a digest-pinned image as a provider snapshot (instance administrator only).",
+        "description": "Asks the instance's sandbox provider to create a snapshot named `name` from `image`, a registry image pinned by digest (`repository@sha256:<64 hex>`; a tag alone is refused, and a tag next to the digest is dropped), with the provider's own credentials, and records the name and digest. Sandboxes then start from the snapshot by name, so no image is pulled by tag at run time. Turntable's default image is `ghcr.io/turntable-ci/turntable-ubuntu-24.04`; any other ref is recorded as operator-registered. Naming `target_org` and `target_project` also points that project at the snapshot (its `sandbox_snapshot`, shown by `get_project_settings`). Registering a name again with the same digest is a no-op that refreshes its state; another digest under a taken name is a conflict (register a new name). Map `ubuntu-latest` to it with the size config's default class (`providers.daytona.snapshot`). Audited. Not an MCP tool.\n\nInstance administrator only: a `tti_` token minted on the host with `turntable token create --instance`. No org token of any role can call it. Not an MCP tool. Side effects: write; audited.",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "Snapshot name: letters, digits, . _ -."
+                  },
+                  "image": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "description": "Registry image pinned by digest."
+                  },
+                  "cpus": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 256
+                  },
+                  "memory_mb": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 2097152
+                  },
+                  "disk_gb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16384
+                  },
+                  "target_org": {
+                    "description": "Slug of the org of target_project.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "target_project": {
+                    "description": "Slug of a project to start from this snapshot.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": ["name", "image"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Turntable-Version": {
+                "$ref": "#/components/headers/TurntableVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The provider snapshot sandboxes start from."
+                    },
+                    "image": {
+                      "type": "string",
+                      "description": "The registry image it was made from: repository@sha256:..."
+                    },
+                    "digest": {
+                      "type": "string",
+                      "description": "The image digest, sha256:<64 hex>."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["turntable", "operator"],
+                      "description": "turntable: Turntable's own registry (ghcr.io/turntable-ci/); operator: a ref the operator chose."
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["pending", "ready", "unavailable"],
+                      "description": "pending: the provider is still building it; unavailable: it is stopped or being removed."
+                    },
+                    "project": {
+                      "description": "The project now starting from it, if one was named.",
+                      "type": ["string", "null"]
+                    }
+                  },
+                  "required": ["name", "image", "digest", "source", "state", "project"],
                   "additionalProperties": false
                 }
               }

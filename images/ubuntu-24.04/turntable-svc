@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# turntable-svc: start a CI service on localhost without Docker, in the turntable-ubuntu-24.04 image.
+#
+#   turntable-svc start postgres|redis|mysql   start it and wait until it answers
+#   turntable-svc stop postgres|redis|mysql
+#   turntable-svc status
+#
+# Every service listens on 127.0.0.1 only and runs as the non-root `runner` user (dropped to from
+# root), with its data under $TURNTABLE_SVC_DATA (default /var/lib/turntable-svc). Defaults match a
+# GitHub `services:` container:
+#   postgres  port $PGPORT (5432), superuser $POSTGRES_USER (postgres), password $POSTGRES_PASSWORD
+#             (unset: trust auth on localhost), database $POSTGRES_DB (the user's name). pgvector,
+#             pg_trgm and citext are installed; CREATE EXTENSION them as needed.
+#   redis     port $REDIS_PORT (6379), no password.
+#   mysql     port $MYSQL_PORT (3306), root password $MYSQL_ROOT_PASSWORD (unset: none), database
+#             $MYSQL_DATABASE when set.
+set -euo pipefail
+
+DATA="${TURNTABLE_SVC_DATA:-/var/lib/turntable-svc}"
+RUN_DIR="${TURNTABLE_SVC_RUN:-/var/run/turntable-svc}"
+SVC_USER="${TURNTABLE_SVC_USER:-runner}"
+# sudo resets the environment, so without PG_BIN use the newest installed major.
+if [ -z "${PG_BIN:-}" ]; then
+  PG_BIN="$(printf '%s\n' /usr/lib/postgresql/*/bin | sort -V | tail -n 1)"
+fi
+WAIT_SECONDS="${TURNTABLE_SVC_WAIT:-60}"
+
+die() {
+  echo "turntable-svc: $*" >&2
+  exit 1
+}
+
+# Runs a command as the service user: as is when we already are not root.
+as_user() {
+  if [ "$(id -u)" -eq 0 ]; then
+    runuser -u "$SVC_USER" -- env PATH="$PATH" HOME="$(getent passwd "$SVC_USER" | cut -d: -f6)" "$@"
+  else
+    "$@"
+  fi
+}
+
+prepare() {
+  if [ "$(id -u)" -eq 0 ]; then
+    install -d -o "$SVC_USER" -g "$SVC_USER" -m 0755 "$DATA" "$RUN_DIR"
+  else
+    mkdir -p "$DATA" "$RUN_DIR"
+  fi
+}
+
+wait_for() {
+  local name="$1"
+  shift
+  local i
+  for ((i = 0; i < WAIT_SECONDS * 2; i++)); do
+    if "$@" >/dev/null 2>&1; then
+      echo "turntable-svc: $name is ready"
+      return 0
+    fi
+    sleep 0.5
+  done
+  die "$name did not answer within ${WAIT_SECONDS}s"
+}
+
+start_postgres() {
+  local port="${PGPORT:-5432}" user="${POSTGRES_USER:-postgres}" dir="$DATA/postgres"
+  local db="${POSTGRES_DB:-$user}"
+  if [ ! -s "$dir/PG_VERSION" ]; then
+    local pwfile=()
+    if [ -n "${POSTGRES_PASSWORD:-}" ]; then
+      printf '%s\n' "$POSTGRES_PASSWORD" >"$RUN_DIR/pgpass.tmp"
+      [ "$(id -u)" -eq 0 ] && chown "$SVC_USER" "$RUN_DIR/pgpass.tmp"
+      chmod 0600 "$RUN_DIR/pgpass.tmp"
+      pwfile=(--pwfile="$RUN_DIR/pgpass.tmp" --auth-host=scram-sha-256)
+    else
+      pwfile=(--auth-host=trust)
+    fi
+    as_user "$PG_BIN/initdb" -D "$dir" -U "$user" -E UTF8 --locale=C.UTF-8 --auth-local=trust "${pwfile[@]}" >/dev/null
+    rm -f "$RUN_DIR/pgpass.tmp"
+  fi
+  as_user "$PG_BIN/pg_ctl" -D "$dir" -l "$DATA/postgres.log" -w -t "$WAIT_SECONDS" \
+    -o "-c listen_addresses=127.0.0.1 -p $port -k $RUN_DIR" start >/dev/null
+  wait_for postgres as_user "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$port"
+  if [ "$db" != "$user" ]; then
+    as_user "$PG_BIN/psql" -h "$RUN_DIR" -p "$port" -U "$user" -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '${db//\'/\'\'}'" | grep -q 1 ||
+      as_user "$PG_BIN/createdb" -h "$RUN_DIR" -p "$port" -U "$user" "$db"
+  fi
+}
+
+stop_postgres() {
+  [ -s "$DATA/postgres/PG_VERSION" ] || return 0
+  as_user "$PG_BIN/pg_ctl" -D "$DATA/postgres" -m fast -w stop >/dev/null || true
+}
+
+start_redis() {
+  local port="${REDIS_PORT:-6379}"
+  as_user mkdir -p "$DATA/redis"
+  as_user redis-server --daemonize yes --bind 127.0.0.1 --port "$port" --dir "$DATA/redis" \
+    --pidfile "$RUN_DIR/redis.pid" --logfile "$DATA/redis.log" --save "" --appendonly no
+  wait_for redis redis-cli -h 127.0.0.1 -p "$port" ping
+}
+
+stop_redis() {
+  redis-cli -h 127.0.0.1 -p "${REDIS_PORT:-6379}" shutdown nosave >/dev/null 2>&1 || true
+}
+
+start_mysql() {
+  local port="${MYSQL_PORT:-3306}" dir="$DATA/mysql" sock="$RUN_DIR/mysqld.sock"
+  if [ ! -d "$dir/mysql" ]; then
+    as_user mysqld --initialize-insecure --datadir="$dir" --log-error="$DATA/mysql-init.log"
+  fi
+  as_user mysqld --daemonize --datadir="$dir" --bind-address=127.0.0.1 --port="$port" \
+    --socket="$sock" --pid-file="$RUN_DIR/mysqld.pid" --log-error="$DATA/mysql.log" \
+    --mysqlx=OFF >/dev/null
+  wait_for mysql mysqladmin --socket="$sock" -u root ping
+  if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
+    # MySQL string literals escape both the quote and the backslash.
+    local pw="${MYSQL_ROOT_PASSWORD//\\/\\\\}"
+    pw="${pw//\'/\'\'}"
+    # The SQL goes in on stdin so the password never shows in the process list.
+    printf '%s\n' "ALTER USER 'root'@'localhost' IDENTIFIED BY '$pw'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$pw'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" |
+      mysql --socket="$sock" -u root 2>>"$DATA/mysql-init.log" ||
+      MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --socket="$sock" -u root -e "SELECT 1" >/dev/null 2>&1 ||
+      die "mysql: could not set the root password (see $DATA/mysql-init.log)"
+  else
+    mysql --socket="$sock" -u root -e \
+      "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null ||
+      die "mysql: could not create the root@127.0.0.1 user (see $DATA/mysql.log)"
+  fi
+  if [ -n "${MYSQL_DATABASE:-}" ]; then
+    MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-}" mysql --socket="$sock" -u root -e \
+      "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE//\`/}\`"
+  fi
+}
+
+stop_mysql() {
+  [ -f "$RUN_DIR/mysqld.pid" ] || return 0
+  MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-}" mysqladmin --socket="$RUN_DIR/mysqld.sock" -u root shutdown >/dev/null 2>&1 || true
+}
+
+status() {
+  local s
+  for s in postgres redis mysql; do
+    case "$s" in
+      postgres) "$PG_BIN/pg_isready" -h 127.0.0.1 -p "${PGPORT:-5432}" >/dev/null 2>&1 ;;
+      redis) redis-cli -h 127.0.0.1 -p "${REDIS_PORT:-6379}" ping >/dev/null 2>&1 ;;
+      mysql) mysqladmin --socket="$RUN_DIR/mysqld.sock" -u root ping >/dev/null 2>&1 ;;
+    esac && echo "$s: running" || echo "$s: stopped"
+  done
+}
+
+usage() {
+  echo "usage: turntable-svc start|stop postgres|redis|mysql, or turntable-svc status" >&2
+  exit 2
+}
+
+cmd="${1:-}"
+svc="${2:-}"
+case "$cmd" in
+  status) status ;;
+  start | stop)
+    case "$svc" in
+      postgres | redis | mysql) ;;
+      *) usage ;;
+    esac
+    prepare
+    "${cmd}_${svc}"
+    ;;
+  *) usage ;;
+esac
