@@ -5,15 +5,7 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "..";
 import * as s from "../schema";
-import {
-  createAttempt,
-  createJob,
-  listAttempts,
-  listJobs,
-  transitionJob,
-  updateAttempt,
-} from "./index";
-import { appendLog } from "./index";
+import { createAttempt, createJob, listAttempts, listJobs } from "./index";
 import type { Job } from "./index";
 import { scoped, type Scope } from "./scope";
 
@@ -43,9 +35,6 @@ export async function applyExpansion(
 ): Promise<"claim" | "done"> {
   const attempts = await listAttempts(db, scope, job.id);
   const live = attempts.findLast((a) => a.state === "queued");
-  const note = async (text: string): Promise<void> => {
-    if (live) await appendLog(db, scope, live.id, 0, new TextEncoder().encode(`${text}\n`));
-  };
   if (expansion.kind === "error") {
     // The job stays queued and is claimed as it is, marked unsupported: the runner ends it as a
     // failure with this reason, like any job that cannot run, so it has a check run and never
