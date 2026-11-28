@@ -32,7 +32,11 @@ import type { AppAuth } from "../github/app-auth";
 import type { SecretStore } from "../secrets/store";
 import type { SecretVault } from "../secrets/vault";
 import type { RunDispatcher } from "../poll/dispatch";
-import type { DefaultBranchRunner, RepoReaderFactory } from "../poll/onboarding-forge";
+import type {
+  ContainerJobs,
+  DefaultBranchRunner,
+  RepoReaderFactory,
+} from "../poll/onboarding-forge";
 import { OpError } from "./errors";
 import { authenticateSigned } from "./signed";
 import { type Credential, orgRole, type Principal, principalId } from "./principal";
@@ -64,6 +68,7 @@ export type DispatchEnv = {
   runDispatcher?: RunDispatcher | undefined;
   /** Read-only repo reader for the onboarding preview; absent without a GitHub App. */
   repoReader?: RepoReaderFactory | undefined;
+  containerJobs?: ContainerJobs | undefined;
   /** Starts a default-branch push run (the poller); absent where this process has none. */
   defaultBranchRunner?: DefaultBranchRunner | undefined;
   /** Login to numeric id lookup, for invites. */
@@ -705,6 +710,7 @@ export async function dispatch(
       githubUsers: env.githubUsers,
       runDispatcher: env.runDispatcher,
       repoReader: env.repoReader,
+      containerJobs: env.containerJobs,
       defaultBranchRunner: env.defaultBranchRunner,
       webhooks: env.webhooks,
       webauthn: env.webauthn,

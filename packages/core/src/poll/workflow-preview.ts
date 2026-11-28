@@ -4,6 +4,7 @@
 import { planWorkflow, type PlannedJob, type WorkflowEvent } from "@turntable/act-runner";
 import { parse } from "yaml";
 import { refusalFor } from "../scheduler/sandbox-size";
+import type { ContainerJobs } from "./onboarding-forge";
 
 /** Events Turntable ingests today (a tag push is a `push`). `schedule` is not ingested yet. */
 export const INGESTED_EVENTS: readonly string[] = [
@@ -67,6 +68,8 @@ export type PreviewJob = {
   verdict: "run" | "skip" | "fail";
   reason?: string;
   fix?: string;
+  /** For `run`: host mode, or act's container mode for a job with services: or container: (#796). */
+  mode?: "host" | "container";
   refs: PreviewRef[];
 };
 
@@ -151,7 +154,7 @@ function triggerNames(on: unknown): string[] {
 
 export function previewWorkflow(
   yaml: string,
-  o: { defaultBranch: string; vars: Record<string, string> },
+  o: { defaultBranch: string; vars: Record<string, string>; containerJobs?: ContainerJobs },
 ): WorkflowPreview | undefined {
   let doc: unknown;
   try {
@@ -232,11 +235,20 @@ export function previewWorkflow(
   }
   const jobs = ids.map((id): PreviewJob => {
     const legs = nodes.filter((n) => n.id === id);
+    let container = false;
     for (const n of legs) {
       // The provider's arch is unknown here: assume amd64 only, as the default providers are.
-      const why =
-        refusalFor(n, ["amd64"]) ??
-        (n.needsDocker ? `unsupported: ${clip(n.needsDocker, 80)}` : undefined);
+      let why = refusalFor(n, ["amd64"]);
+      if (why === undefined && n.needsDocker !== undefined) {
+        // The scheduler's own rule for a trusted run (default branch): a Docker-capable class
+        // on a provider that can host Docker runs it in container mode, else the same refusal.
+        const v = o.containerJobs?.(n.needsDocker);
+        if (v?.runnable) container = true;
+        else
+          why =
+            v?.reason ??
+            `unsupported: ${clip(n.needsDocker, 80)}; this server cannot tell whether a Docker-capable size class exists (it runs no worker)`;
+      }
       if (why) {
         return row(id, {
           verdict: "fail",
@@ -251,7 +263,7 @@ export function previewWorkflow(
         reason: "its `if:` condition is false on Turntable before the job starts",
       });
     }
-    return row(id, { verdict: "run" });
+    return row(id, { verdict: "run", mode: container ? "container" : "host" });
   });
   return { ...base, jobs };
 }

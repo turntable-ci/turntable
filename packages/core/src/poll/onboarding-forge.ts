@@ -19,6 +19,15 @@ export interface RepoReader {
 /** A reader for one repo of an installation. Rejects when the server has no GitHub App. */
 export type RepoReaderFactory = (installationId: string, repo: string) => Promise<RepoReader>;
 
+/**
+ * Whether this instance can run a job that needs a container runtime (`services:`,
+ * `container:`; `need` is the planner's reason), for a trusted run: `runnable`, or the refusal the
+ * scheduler would give. Undefined when this process has no worker to ask.
+ */
+export type ContainerJobs = (
+  need: string,
+) => { runnable: true } | { runnable: false; reason: string } | undefined;
+
 export type DefaultBranchRunResult = {
   runId: string;
   sha: string;
