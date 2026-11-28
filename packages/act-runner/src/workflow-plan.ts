@@ -344,7 +344,14 @@ export const MAX_MATRIX_COMBINATIONS = 256;
  */
 export function matrixCombos(
   matrix: unknown,
-  limits: { maxProduct: number; maxEntries: number } = {
+  limits: {
+    maxProduct: number;
+    maxEntries: number;
+    /** Keys allowed in one include or exclude entry, and axes in a matrix. */
+    maxKeys?: number;
+    /** Fail as soon as the combinations left after `exclude` exceed this (includes only add). */
+    maxBase?: number;
+  } = {
     maxProduct: MAX_MATRIX_COMBINATIONS * 64,
     maxEntries: Number.POSITIVE_INFINITY,
   },
@@ -362,7 +369,16 @@ export function matrixCombos(
   const exclude = listOf("exclude", matrix.exclude);
   if (include.length > limits.maxEntries || exclude.length > limits.maxEntries)
     throw new PlanError("matrix", `matrix include and exclude are limited to ${limits.maxEntries}`);
+  const maxKeys = limits.maxKeys ?? Number.POSITIVE_INFINITY;
+  for (const e of [...include, ...exclude])
+    if (Object.keys(e).length > maxKeys)
+      throw new PlanError(
+        "matrix",
+        `a matrix include or exclude entry is limited to ${maxKeys} keys`,
+      );
   const axes = Object.entries(matrix).filter(([k]) => k !== "include" && k !== "exclude");
+  if (axes.length > maxKeys)
+    throw new PlanError("matrix", `a matrix is limited to ${maxKeys} axes`);
   let combos: Combo[] = [];
   if (axes.length > 0) {
     combos = [{}];
@@ -380,6 +396,11 @@ export function matrixCombos(
     }
     combos = combos.filter((c) => !exclude.some((e) => subsetMatch(e, c)));
   }
+  if (limits.maxBase !== undefined && combos.length > limits.maxBase)
+    throw new PlanError(
+      "matrix",
+      `matrix expands to ${combos.length} jobs; the limit is ${limits.maxBase}`,
+    );
   const original = new Set(axes.map(([k]) => k));
   const base = combos;
   const added: Combo[] = [];
@@ -554,6 +575,10 @@ function legName(id: string, rawName: unknown, leg: Combo | undefined, ctx: Expr
   return id;
 }
 
+function clipName(n: string): string {
+  return n.length > MAX_LEG_NAME_LENGTH ? `${n.slice(0, MAX_LEG_NAME_LENGTH - 3)}...` : n;
+}
+
 /** Resolves the `${{ }}` in a matrix's raw value: a whole expression keeps its type, text is interpolated. */
 function resolveMatrixValue(v: unknown, ctx: ExprContext): Value {
   if (typeof v === "string") {
@@ -583,6 +608,13 @@ function findExpression(v: unknown): string | undefined {
   }
   return undefined;
 }
+
+/** Bounds on a matrix built from a needs output: its size, keys per entry, and size per leg. */
+export const MAX_DYNAMIC_MATRIX_BYTES = 64 * 1024;
+export const MAX_DYNAMIC_MATRIX_KEYS = 64;
+export const MAX_DYNAMIC_LEG_BYTES = 16 * 1024;
+/** A leg's job name is cut to this many characters (check run names come from it). */
+export const MAX_LEG_NAME_LENGTH = 256;
 
 export type DynamicExpansion =
   | { kind: "legs"; legs: PlannedJob[] }
@@ -621,9 +653,18 @@ export function expandDynamicMatrix(
         kind: "error",
         message: `strategy.matrix value contains an expression (${bad}); values from needs outputs are data and are never evaluated`,
       };
+    // A needs output is untrusted data: bound the resolved matrix before expanding it, since
+    // this runs inside the claim transaction.
+    if (JSON.stringify(resolved).length > MAX_DYNAMIC_MATRIX_BYTES)
+      return {
+        kind: "error",
+        message: `strategy.matrix is larger than ${MAX_DYNAMIC_MATRIX_BYTES} bytes`,
+      };
     combos = matrixCombos(resolved, {
       maxProduct: MAX_MATRIX_COMBINATIONS * 4,
       maxEntries: MAX_MATRIX_COMBINATIONS * 4,
+      maxKeys: MAX_DYNAMIC_MATRIX_KEYS,
+      maxBase: MAX_MATRIX_COMBINATIONS,
     });
   } catch (e) {
     if (e instanceof ExprError || e instanceof PlanError)
@@ -644,6 +685,12 @@ export function expandDynamicMatrix(
       kind: "error",
       message: `matrix expands to ${combos.length} jobs; the limit is ${MAX_MATRIX_COMBINATIONS}`,
     };
+  for (const c of combos)
+    if (JSON.stringify(c).length > MAX_DYNAMIC_LEG_BYTES)
+      return {
+        kind: "error",
+        message: `a matrix combination is larger than ${MAX_DYNAMIC_LEG_BYTES} bytes`,
+      };
   const { dynamicMatrix: _drop, ...rest } = job;
   const legs = combos.map((leg, i): PlannedJob => {
     const ctx: ExprContext = {
@@ -659,7 +706,7 @@ export function expandDynamicMatrix(
     const out: PlannedJob = {
       ...rest,
       key: `${job.id}[${i}]`,
-      name: legName(job.id, dyn.name, leg, ctx),
+      name: clipName(legName(job.id, dyn.name, leg, ctx)),
       matrix: leg,
     };
     let unsupported: string | undefined;

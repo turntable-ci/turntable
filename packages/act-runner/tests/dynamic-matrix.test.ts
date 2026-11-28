@@ -319,10 +319,60 @@ describe("expanding a dynamic matrix", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 
+  test("a wide include or exclude entry is refused before it is merged into every combination", () => {
+    const axis = (n: number) => Array.from({ length: n }, (_, i) => i);
+    const wide = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`k${i}`, 0]));
+    const t0 = performance.now();
+    for (const m of [
+      { a: axis(32), b: axis(32), include: [wide] },
+      { a: axis(16), b: axis(16), include: [wide] },
+      { a: axis(16), b: axis(16), exclude: [wide] },
+    ]) {
+      const out = expandDynamicMatrix(placeholder(whole), {}, needs(JSON.stringify(m)));
+      expect(out).toMatchObject({ kind: "error" });
+      expect((out as { message: string }).message).toMatch(/keys|larger/);
+    }
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
+  test("a product over 256 fails before any include is merged", () => {
+    const axis = (n: number) => Array.from({ length: n }, (_, i) => i);
+    const out = expandDynamicMatrix(
+      placeholder(whole),
+      {},
+      needs(JSON.stringify({ a: axis(32), b: axis(32), include: [{ k: 1 }] })),
+    );
+    expect(out).toEqual({
+      kind: "error",
+      message: "strategy.matrix is not valid: matrix expands to 1024 jobs; the limit is 256",
+    });
+  });
+
+  test("a matrix or combination over its size cap fails, and a long name is clipped", () => {
+    const big = expandDynamicMatrix(
+      placeholder(whole),
+      {},
+      needs(JSON.stringify({ a: ["x".repeat(70_000)] })),
+    );
+    expect(big).toMatchObject({ kind: "error", message: expect.stringContaining("larger than") });
+    const leg = expandDynamicMatrix(
+      placeholder(whole),
+      {},
+      needs(JSON.stringify({ a: ["x".repeat(20_000)] })),
+    );
+    expect(leg).toMatchObject({ kind: "error", message: expect.stringContaining("combination") });
+    const long = expandDynamicMatrix(
+      placeholder(whole),
+      {},
+      needs(JSON.stringify({ a: ["x".repeat(5_000)] })),
+    );
+    expect(long.kind === "legs" && long.legs[0]?.name.length).toBe(256);
+  });
+
   test("a large axis value shared by every combination does not multiply the matching cost", () => {
     const axis = (n: number) => Array.from({ length: n }, (_, i) => i);
     const m = {
-      huge: ["x".repeat(400_000)],
+      huge: ["x".repeat(12_000)],
       a: axis(16),
       b: axis(16),
       exclude: Array.from({ length: 1024 }, () => ({ huge: 0 })),
