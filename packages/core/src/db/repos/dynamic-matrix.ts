@@ -98,7 +98,7 @@ export async function applyExpansion(
       needs,
       matrix: leg.matrix,
       planned: leg.planned,
-      approvalKind: job.approvalKind ?? undefined,
+      approvalKind: (job.approvalKind ?? undefined) as s.ApprovalKind | undefined,
     });
     if (made) await createAttempt(db, scope, { jobId: made.id, provider });
   }
