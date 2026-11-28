@@ -90,7 +90,11 @@ const tmp = mkdtempSync(join(tmpdir(), "ls-canary-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A provider whose exec runs the command on this machine; `path` sets what tools exist. */
-function localProvider(path: string): Provider {
+function localProvider(
+  path: string,
+  extraEnv: Record<string, string> = {},
+  cwd?: string,
+): Provider {
   const results = new Map<string, { exit: number; out: string }>();
   let n = 0;
   return {
@@ -99,7 +103,8 @@ function localProvider(path: string): Provider {
         const argv = [...o.argv];
         if (argv[0] === "sh") argv[0] = "/bin/sh";
         const p = Bun.spawn(argv, {
-          env: { PATH: path },
+          env: { PATH: path, ...extraEnv },
+          ...(cwd ? { cwd } : {}),
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -152,12 +157,78 @@ test.skipIf(!hasCurl)(
       ).toEqual({
         kind: "reachable",
         target: `127.0.0.1:${open.port}`,
+        detail: "curl direct http 200",
       });
     } finally {
       open.close();
     }
   },
 );
+
+test.skipIf(!hasCurl)(
+  "a dead proxy in the environment does not hide a direct hole, and the direct path says so",
+  async () => {
+    const open = await listening();
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: "http://127.0.0.1:9",
+        http_proxy: "http://127.0.0.1:9",
+      });
+      expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] })).toMatchObject({
+        kind: "reachable",
+        detail: "curl direct http 200",
+      });
+    } finally {
+      open.close();
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "a forwarding proxy in the environment is a breach even when the direct path is closed",
+  async () => {
+    // Answers every request, as a proxy that forwards would.
+    const proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${proxy.port}`,
+        http_proxy: `http://127.0.0.1:${proxy.port}`,
+      });
+      // Port 9 on loopback refuses: only the proxy path can answer.
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        target: "127.0.0.1:9",
+        detail: "curl env http 200",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "a forwarding proxy set in curlrc is a breach even with no proxy variable in the environment",
+  async () => {
+    const proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    const home = mkdtempSync(join(tmp, "home-"));
+    await Bun.write(join(home, ".curlrc"), `proxy = "http://127.0.0.1:${proxy.port}"\n`);
+    try {
+      const p = localProvider(REAL_PATH, { HOME: home });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        target: "127.0.0.1:9",
+        detail: "curl env http 200",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)("a dead proxy and a closed direct path is blocked", async () => {
+  const p = localProvider(REAL_PATH, { HTTP_PROXY: "http://127.0.0.1:9" });
+  expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toEqual({ kind: "blocked" });
+});
 
 test("with no curl, wget, nc or bash the canary is unknown, not blocked", async () => {
   const empty = mkdtempSync(join(tmp, "bin-"));
@@ -358,3 +429,110 @@ test("the sandbox's effective TTL is recorded with it: the shorter of the ask an
   expect(await run(1800)).toEqual([960]); // the ask is shorter than the cap
   expect(await run(undefined)).toEqual([undefined]); // the provider reports none
 });
+
+test.skipIf(!hasCurl)("the canary still probes when no temp directory is writable", async () => {
+  const p = localProvider(REAL_PATH, { TMPDIR: "/nonexistent-dir", HOME: tmp });
+  const closed = await listening();
+  closed.close();
+  await Bun.sleep(30);
+  expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${closed.port}`] })).toEqual({
+    kind: "blocked",
+  });
+  const open = await listening();
+  try {
+    const v = await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] });
+    expect(v.kind).toBe("reachable");
+  } finally {
+    open.close();
+  }
+});
+
+test.skipIf(!hasCurl)(
+  "the canary falls back to HOME when the temp dir and cwd are not writable",
+  async () => {
+    // /proc is never writable, so the working-directory fallback fails and HOME is used.
+    const p = localProvider(REAL_PATH, { TMPDIR: "/nonexistent-dir", HOME: tmp }, "/proc");
+    const open = await listening();
+    try {
+      const v = await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] });
+      expect(v.kind).toBe("reachable");
+    } finally {
+      open.close();
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "a block-all gateway that refuses plain HTTP (403, no target body) is not reachable",
+  async () => {
+    const gateway = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("forbidden by network policy", { status: 403 }),
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${gateway.port}`,
+        http_proxy: `http://127.0.0.1:${gateway.port}`,
+      });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toEqual({
+        kind: "blocked",
+      });
+    } finally {
+      await gateway.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "a forwarding proxy that answers the target with an error is still reachable",
+  async () => {
+    // Forwards the target (a 404 from it) and fails for an address that cannot exist.
+    const proxy = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req) =>
+        (req.headers.get("host") ?? "").includes("192.0.2.1")
+          ? new Response("bad gateway", { status: 502 })
+          : new Response("not found on the target", { status: 404 }),
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${proxy.port}`,
+        http_proxy: `http://127.0.0.1:${proxy.port}`,
+      });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        detail: "curl env http 404",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "targets that drop packets are probed in parallel, so the passes do not add up",
+  async () => {
+    // Accepts connections and never answers: every probe runs to its 3s limit.
+    const hang = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {}, open() {} },
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${hang.port}`,
+        http_proxy: `http://127.0.0.1:${hang.port}`,
+      });
+      const targets = Array.from({ length: 4 }, () => `127.0.0.1:${hang.port}`);
+      const t0 = Date.now();
+      expect(await probeEgress(p, "sbx", { targets })).toEqual({ kind: "blocked" });
+      // One pass is 4 x 3s = 12s; two passes in series would be 24s.
+      expect(Date.now() - t0).toBeLessThan(18_000);
+    } finally {
+      hang.stop(true);
+    }
+  },
+  40_000,
+);

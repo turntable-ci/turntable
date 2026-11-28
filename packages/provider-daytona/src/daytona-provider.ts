@@ -1068,6 +1068,13 @@ export class DaytonaProvider implements Provider {
             );
           }
         }
+        // Egress none must come back as block-all: a reply without it means the account did not
+        // apply it, and the sandbox may have an open network.
+        if (spec.network.egress === "none" && sb.networkBlockAll !== true) {
+          throw new InfraError(
+            "Daytona did not apply networkBlockAll for egress none; the sandbox was deleted",
+          );
+        }
         await this.waitStarted(sb.id);
         const base = await this.verify(sb.id, true);
         await this.waitToolbox(sb.id, base);
