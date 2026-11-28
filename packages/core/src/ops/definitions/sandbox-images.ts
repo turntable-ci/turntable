@@ -164,18 +164,24 @@ export const registerSandboxImage = defineOp({
       registeredBy: ctx.principal.id,
       registeredAt: ctx.now(),
     };
+    let projectGone = false;
     await ctx.db.transaction(
       async (tx) => {
         await putSandboxImage(tx, record);
         if (!target) return;
         const scope = { orgId: target.orgId, projectId: target.projectId };
         const from = await getProjectSandboxSettings(tx, scope);
-        await setProjectSandboxSettings(
+        const updated = await setProjectSandboxSettings(
           tx,
           scope,
           { sandboxSnapshot: i.name },
           { id: ctx.principal.id, now: ctx.now() },
         );
+        if (updated === undefined) {
+          // The project was deleted while the provider call ran: keep the snapshot record only.
+          projectGone = true;
+          return;
+        }
         await appendAudit(tx, scope, {
           principalKind: "instance",
           principalId: ctx.principal.id,
@@ -193,6 +199,7 @@ export const registerSandboxImage = defineOp({
       },
       target ? { lock: `audit:${target.orgId}` } : {},
     );
+    if (projectGone) throw new OpError("not_found", "no such project");
     return { ...imageView(record), project: target?.projectId ?? null };
   },
 });
