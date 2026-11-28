@@ -45,6 +45,7 @@ ev "$J" "Run" "Set up job" ""
 ev "$J" "ok" "Set up job" ',"stepResult":"success"'
 case "$J" in
   build) printf '%s' '1.2.3' > "$R/outputs/version" ;;
+  gen) printf '%s' '{"n":[1,2]}' > "$R/outputs/m" ;;
 esac
 case "$J" in
   fail|mfail|flaky)
@@ -226,6 +227,31 @@ jobs:
     expect(jobs.map((j) => JSON.parse(j.matrix ?? "null"))).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
     // each leg's generated workflow has just its own literal leg
     expect(existsSync(join(b.root, "repo/.turntable/jobs/mfail_2_.yml"))).toBe(true);
+  });
+
+  test("a run-time matrix is reported as one result per leg, named after the leg", async () => {
+    const a = await go(`on: push
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    outputs:
+      m: \${{ steps.g.outputs.m }}
+    steps:
+      - id: g
+        run: echo 'm={"n":[1,2]}' >> "$GITHUB_OUTPUT"
+  use:
+    needs: gen
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: \${{ fromJSON(needs.gen.outputs.m) }}
+    steps:
+      - run: echo \${{ matrix.n }}
+`);
+    expect(a.result.jobs.map((j) => [j.key, j.name, j.state])).toEqual([
+      ["gen", "gen", "success"],
+      ["use[0]", "use (1)", "success"],
+      ["use[1]", "use (2)", "success"],
+    ]);
   });
 
   test("continue-on-error: a failed job still counts as success for dependents and the run", async () => {

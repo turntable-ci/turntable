@@ -303,8 +303,33 @@ export function githubContext(
 
 type Combo = Record<string, Value>;
 
-const subsetMatch = (small: Combo, big: Combo): boolean =>
-  Object.entries(small).every(([k, v]) => k in big && JSON.stringify(big[k]) === JSON.stringify(v));
+/**
+ * Compares values by their JSON form without re-serializing: every distinct value gets an id once
+ * (objects by reference, then by their JSON text; primitives by value), so a subset check costs
+ * one lookup per key however large a value is. Matrix values from a needs output can be large and
+ * are shared by every combination.
+ */
+function valueIds(): (v: unknown) => number {
+  const byRef = new WeakMap<object, number>();
+  const byText = new Map<string, number>();
+  const byPrim = new Map<unknown, number>();
+  let next = 0;
+  return (v) => {
+    if (typeof v === "object" && v !== null) {
+      let id = byRef.get(v);
+      if (id === undefined) {
+        const text = JSON.stringify(v);
+        id = byText.get(text);
+        if (id === undefined) byText.set(text, (id = next++));
+        byRef.set(v, id);
+      }
+      return id;
+    }
+    let id = byPrim.get(v);
+    if (id === undefined) byPrim.set(v, (id = next++));
+    return id;
+  };
+}
 
 /** GitHub's cap on the combinations of one matrix. */
 export const MAX_MATRIX_COMBINATIONS = 256;
@@ -330,6 +355,9 @@ export function matrixCombos(
     if (!Array.isArray(v)) throw new PlanError("matrix", `matrix ${k} must be a list of mappings`);
     return v.filter(isObj) as Combo[];
   };
+  const idOf = valueIds();
+  const subsetMatch = (small: Combo, big: Combo): boolean =>
+    Object.entries(small).every(([k, v]) => k in big && idOf(big[k]) === idOf(v));
   const include = listOf("include", matrix.include);
   const exclude = listOf("exclude", matrix.exclude);
   if (include.length > limits.maxEntries || exclude.length > limits.maxEntries)
@@ -604,6 +632,13 @@ export function expandDynamicMatrix(
       return { kind: "error", message: `strategy.matrix is not valid: ${e.message}` };
     throw e;
   }
+  for (const c of combos)
+    for (const k of ["include", "exclude"])
+      if (k in c)
+        return {
+          kind: "error",
+          message: `strategy.matrix has a key named "${k}" inside a combination; that name is reserved`,
+        };
   if (combos.length === 0)
     return { kind: "empty", reason: "matrix expanded to no jobs, so the job is skipped" };
   if (combos.length > MAX_MATRIX_COMBINATIONS)

@@ -319,6 +319,33 @@ describe("expanding a dynamic matrix", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 
+  test("a large axis value shared by every combination does not multiply the matching cost", () => {
+    const axis = (n: number) => Array.from({ length: n }, (_, i) => i);
+    const m = {
+      huge: ["x".repeat(400_000)],
+      a: axis(16),
+      b: axis(16),
+      exclude: Array.from({ length: 1024 }, () => ({ huge: 0 })),
+      include: Array.from({ length: 1024 }, () => ({ a: 1, c: 1 })),
+    };
+    const t0 = performance.now();
+    const out = expandDynamicMatrix(placeholder(whole), {}, needs(JSON.stringify(m)));
+    expect(out.kind).toBe("legs");
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
+
+  test("a leg key named include or exclude is refused", () => {
+    for (const k of ["include", "exclude"]) {
+      const out = expandDynamicMatrix(
+        placeholder(whole),
+        {},
+        needs(JSON.stringify({ a: [1], include: [{ [k]: { a: 2 } }] })),
+      );
+      expect(out).toMatchObject({ kind: "error" });
+      expect((out as { message: string }).message).toContain("reserved");
+    }
+  });
+
   test("a leg whose runs-on names another OS is unsupported, others are not", () => {
     const out = expandDynamicMatrix(
       placeholder(whole),
