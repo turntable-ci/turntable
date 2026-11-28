@@ -8,6 +8,7 @@ import {
   PREEMPTED,
 } from "../../db/repos";
 import { APPROVAL_KINDS } from "../../db/schema";
+import { toWaiting, waitingFields } from "../waiting";
 import { durationMs, iso, jobStateSchema, runSummarySchema, toRunSummary } from "../common";
 import { defineOp } from "../define";
 import { OpError } from "../errors";
@@ -41,6 +42,7 @@ const attemptSchema = z.object({
     .describe(
       "True when the stored log of this attempt is missing output that could not be retrieved (see job_cuts for where). The text also carries a `[turntable] ... could not be retrieved` line at each gap.",
     ),
+  ...waitingFields,
   sandbox_seconds: z
     .number()
     .nullable()
@@ -80,6 +82,12 @@ const jobSchema = z.object({
   started_at: z.string().nullable(),
   finished_at: z.string().nullable(),
   duration_ms: z.int().nullable(),
+  waiting_reason: z
+    .string()
+    .nullable()
+    .describe(
+      "While the job waits: `approval` when held for an approval, else the latest attempt's waiting_reason. Null otherwise.",
+    ),
   infra_error_reason: z
     .string()
     .nullable()
@@ -210,6 +218,12 @@ export const getRun = defineOp({
           started_at: iso(job.startedAt),
           finished_at: iso(job.finishedAt),
           duration_ms: durationMs(job.startedAt, job.finishedAt),
+          waiting_reason:
+            job.state === "awaiting_approval"
+              ? "approval"
+              : latest
+                ? toWaiting(latest, Date.now()).waiting_reason
+                : null,
           infra_error_reason:
             latest?.state === "infra_error" ? (latest.errorClass ?? "unknown") : null,
           preemptions: mine.filter((a) => a.errorClass === PREEMPTED).length,
@@ -225,6 +239,7 @@ export const getRun = defineOp({
             finished_at: iso(a.finishedAt),
             duration_ms: durationMs(a.startedAt, a.finishedAt),
             log_incomplete: incomplete.has(a.id),
+            ...toWaiting(a, Date.now()),
             sandbox_created_at: iso(a.sandboxCreatedAt),
             sandbox_destroyed_at: iso(a.sandboxDestroyedAt),
             sandbox_seconds:

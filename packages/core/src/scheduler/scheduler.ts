@@ -18,6 +18,7 @@ import {
   ifLeaseHeld,
   isAdoptable,
   markDrainCut,
+  markWaiting,
   isDefaultBranchPush,
   attemptHasStartedSteps,
   DRAIN_CUT,
@@ -90,6 +91,13 @@ export type SchedulerOptions = {
 
 /** The longest an infra retry waits for a forge's rate limit to reset (#621). */
 export const MAX_RETRY_AFTER_MS = 3_600_000;
+
+/**
+ * How long before its lease ends, by its own clock, a controller stops using an attempt's
+ * credentials (#789): room for the clocks of two controllers to differ. A tenth of the lease when
+ * that is less.
+ */
+export const LEASE_GUARD_MARGIN_MS = 2_000;
 
 /** The fixed wait before an infra retry (#517). */
 export const INFRA_RETRY_BACKOFF_MS = 10_000;
@@ -275,7 +283,15 @@ export class Scheduler {
     let started = 0;
     for (;;) {
       // Draining: nothing new starts. Queued work stays queued; running attempts carry on.
-      if (this.#o.drain.draining) return started;
+      if (this.#o.drain.draining) {
+        // Say why they wait (#775); a no-op once every queued attempt already says so.
+        await markWaiting(this.#o.db, {
+          reason: "drain",
+          now: this.#o.now(),
+          onlyRun: this.#o.onlyRun,
+        }).catch((err) => this.#o.log(`could not mark the queue as draining: ${String(err)}`));
+        return started;
+      }
       // Degraded network (#698): nothing is claimed; the queue waits and resumes in order.
       if (this.#o.network.degraded) return started;
       const now = this.#o.now();
@@ -570,10 +586,21 @@ export class Scheduler {
       },
     };
 
+    // When this controller's lease ends by its own clock, unless a heartbeat renews it (#789): the
+    // time the database holds, from the claim and from each heartbeat that landed. Past it (less a
+    // margin for the clocks of two controllers) another one may take the attempt over and mint its
+    // own credentials, so `leaseValid` turns false and the secrets proxy stops using this one's.
+    // At most one controller's GitHub token is usable for the attempt, but for clock skew beyond
+    // the margin.
+    let leaseUntil = attempt.leaseExpiresAt ?? this.#o.now() + this.#o.leaseMs;
+    const margin = Math.min(LEASE_GUARD_MARGIN_MS, Math.floor(this.#o.leaseMs / 10));
+    const leaseValid = (): boolean => this.#o.now() < leaseUntil - margin;
     const beat = setInterval(() => {
-      void heartbeatAttempt(db, scope, attempt.id, owner, this.#o.now(), this.#o.leaseMs)
+      const at = this.#o.now();
+      void heartbeatAttempt(db, scope, attempt.id, owner, at, this.#o.leaseMs)
         .then((ok) => {
-          if (!ok) controller.abort("lease lost");
+          if (ok) leaseUntil = Math.max(leaseUntil, at + this.#o.leaseMs);
+          else controller.abort("lease lost");
         })
         .catch((err) => {
           // A failed heartbeat is not a lost lease yet; the next one may succeed. If the
@@ -598,6 +625,7 @@ export class Scheduler {
             scope,
             provider,
             signal: controller.signal,
+            leaseValid,
             detach: detach.signal,
             store,
             ...(resume ? { resume } : {}),

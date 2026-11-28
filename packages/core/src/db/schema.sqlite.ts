@@ -460,6 +460,16 @@ export const jobAttempts = sqliteTable(
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: integer("lease_expires_at", { mode: "number" }),
     heartbeatAt: integer("heartbeat_at", { mode: "number" }),
+    /**
+     * Why this queued attempt is not running (#775): `needs`, `project_cap`, `org_cap`,
+     * `instance_cap`, `quota:<metric>`, `yield`, `drain` or `claimable`. Written by the claim pass
+     * only when the reason changes. Null until the first pass has looked at it.
+     */
+    waitingReason: text("waiting_reason"),
+    /** When `waiting_reason` last changed (epoch ms); null until the first reason is set. */
+    waitingSince: integer("waiting_since", { mode: "number" }),
+    /** Queued time per finished reason as JSON (`{"needs": 1200}`, ms), closed when the attempt starts. */
+    waitedMs: text("waited_ms"),
     createdAt: createdAt(),
     startedAt: integer("started_at", { mode: "number" }),
     finishedAt: integer("finished_at", { mode: "number" }),

@@ -109,6 +109,28 @@ jobs:
   });
 });
 
+describe("service options cannot publish ports (#796)", () => {
+  for (const options of [
+    "-p 5432:5432",
+    "--publish 5432:5432",
+    "--publish=5432",
+    "-P",
+    "-p5432:5432",
+  ]) {
+    test(`refuses ${options}`, () => {
+      expect(() =>
+        bindServicePorts({ db: { image: "postgres:16", ports: ["5432:5432"], options } }),
+      ).toThrow(/publish a port/);
+    });
+  }
+  test("keeps a health command and other options", () => {
+    const r = bindServicePorts({
+      db: { image: "p", ports: ["5432"], options: "--health-cmd pg_isready --pids-limit 100" },
+    });
+    expect(r.ports.db).toEqual({ "5432": "5432" });
+  });
+});
+
 describe("job.services.<id>.ports context (#796)", () => {
   test("references in expressions, env and bare step if become the literal host port", () => {
     const job = generated();
@@ -185,6 +207,25 @@ describe("health-check gating (#796)", () => {
   test("it happens before any step and is not retried", () => {
     expect(INFRA_KINDS.service_unhealthy.beforeSteps).toBe(true);
     expect(isRetryableInfra("service_unhealthy", "trusted_pr")).toBe(false);
+  });
+
+  test("a step's own error with the same words stays a job failure", () => {
+    const sum = summarize([
+      { type: "job-start", jobId: "test", inferred: true, time: "t" },
+      {
+        type: "step-start",
+        jobId: "test",
+        stepKey: "0",
+        name: "Boom",
+        stage: "Main",
+        inferred: false,
+        time: "t",
+      },
+      { type: "error", jobId: "test", message: "service container failed to start", time: "t" },
+      { type: "job-end", jobId: "test", result: "failure", time: "t" },
+    ]);
+    expect(sum.serviceUnhealthy).toBeUndefined();
+    expect(decide({ state: "exited", exitCode: 1 }, sum).state).toBe("failure");
   });
 
   test("a normal step failure stays a job failure", () => {

@@ -676,6 +676,10 @@ const UNREACHABLE: Record<string, string> = {
     "a hardware policy needs a counted passkey with an allowed AAGUID, and the fixture approvers are ed25519; refused by the handler for A as well. B is still probed: it reaches the handler and finds no such approver of its own",
   get_approval_policy:
     "owner role: no token holds it, so every token principal of A and B is refused alike; an owner session works in its own org alone, and approval-policy-web.test.ts covers the gate",
+  change_project_pr_policy:
+    "owner or admin web sessions only (every token of A and B is refused alike); project-pr-policy.test.ts covers the roles, the owner-only widening and the project scoping",
+  tighten_project_egress:
+    "owner web sessions only (every token of A and B is refused alike); project-egress.test.ts covers the role, the tighten-only rule and the project scoping",
   set_approval_policy:
     "owner web sessions only (every token of A and B is refused alike), and a loosening needs a passkey step-up; approval-policy-web.test.ts covers the gate and the org scoping",
   approval_policy_challenge:

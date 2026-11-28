@@ -129,6 +129,7 @@ test("get_run: run, job and attempt fields", () => {
       finished_at: true,
       duration_ms: true,
       infra_error_reason: true,
+      waiting_reason: true,
       attempts: true,
       log_path: true,
     }),
@@ -148,6 +149,8 @@ test("get_run: run, job and attempt fields", () => {
       sandbox_created_at: true,
       sandbox_destroyed_at: true,
       sandbox_seconds: true,
+      waiting_reason: true,
+      queued_ms_by_reason: true,
     }),
   );
 });

@@ -35,6 +35,7 @@ import {
 } from "./index";
 import { effectiveStates } from "./readiness";
 import { type Scope } from "./scope";
+import { releasedPatch } from "./waiting";
 
 export type Approver = typeof s.approvers.$inferSelect;
 export type ApprovalRecord = typeof s.approvalRecords.$inferSelect;
@@ -826,7 +827,12 @@ export function releaseEnvironmentJobs(
       const waiting = (await listAttempts(tx, scope, job.id)).findLast(
         (a) => a.state === "awaiting_approval",
       );
-      if (waiting) await updateAttempt(tx, scope, waiting.id, { state: "queued" });
+      if (waiting) {
+        await updateAttempt(tx, scope, waiting.id, {
+          state: "queued",
+          ...releasedPatch(waiting, Date.now()),
+        });
+      }
     }
     const all = await listJobs(tx, scope, runId);
     const state = aggregateRunStatus(effectiveStates(all));

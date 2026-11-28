@@ -29,7 +29,13 @@ import {
 import { newTagCaches, pollRepo, targetScope } from "./ingest";
 import { githubNoticeWriter, type PrNoticeWriter } from "./pr-notices";
 import type { DefaultBranchRunResult, RepoReader } from "./onboarding-forge";
-import { ingestStatus, POLL_RESERVE, type PollAuthMode, type RepoStatus } from "./status";
+import {
+  ingestStatus,
+  POLL_RESERVE,
+  skippedFromRefused,
+  type PollAuthMode,
+  type RepoStatus,
+} from "./status";
 
 /** What the poller needs from the GitHub App: the one mint function (it caches until near expiry). */
 export interface InstallationMinter {
@@ -727,6 +733,7 @@ export class Poller {
       await this.#checkDrift(cfg, github);
       let created = 0;
       let skipped = false;
+      const refused: { what: string; reason: string }[] = [];
       for (const entry of cfgs) {
         const res = await pollRepo(
           {
@@ -747,6 +754,7 @@ export class Poller {
           continue;
         }
         created += res.created.length + (res.released?.length ?? 0);
+        refused.push(...res.refused);
         if (res.superseded.length > 0) this.#o.onSuperseded?.(res.superseded);
       }
       this.#failures.delete(repo);
@@ -754,6 +762,7 @@ export class Poller {
         return finish("error", "bound to another project; poll entry is stale", intervalMs);
       status.lastSuccessAt = now;
       status.runsCreated += created;
+      status.skippedPrs = skippedFromRefused(refused, status.skippedPrs, now);
       if (created > 0) this.#o.onQueued?.();
       return finish("ok", null, intervalMs);
     } catch (err) {

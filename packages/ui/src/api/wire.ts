@@ -56,6 +56,8 @@ export type WireAttempt = {
   sandbox_created_at: string | null;
   sandbox_destroyed_at: string | null;
   sandbox_seconds: number | null;
+  waiting_reason?: string | null;
+  queued_ms_by_reason?: Record<string, number>;
 };
 
 export type WireSandboxUsage = {
@@ -103,6 +105,7 @@ export type WireJob = {
   finished_at: string | null;
   duration_ms: number | null;
   infra_error_reason: string | null;
+  waiting_reason?: string | null;
   attempts: WireAttempt[];
   log_path: string | null;
 };

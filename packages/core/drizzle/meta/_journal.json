@@ -407,6 +407,13 @@
       "when": 1795820958532,
       "tag": "0058_attempt_adopt_spec",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1795837286208,
+      "tag": "0059_attempt_waiting_reason",
+      "breakpoints": true
     }
   ]
 }

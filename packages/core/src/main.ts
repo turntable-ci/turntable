@@ -294,6 +294,8 @@ async function startBackground(
   repoReader: RepoReaderFactory | undefined;
   runDefaultBranch: DefaultBranchRunner | undefined;
   containerJobs: ContainerJobs | undefined;
+  /** Egress modes the worker's provider can enforce; undefined without a worker role. */
+  providerEgress(): readonly string[] | undefined;
 }> {
   const log = (m: string) => console.log(`[turntable] ${m}`);
   // Loaded first: the worker uses the poll token to resolve actions for the repos it watches.
@@ -344,6 +346,8 @@ async function startBackground(
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let poller: Poller | undefined;
   let workerProvider: Provider | undefined;
+  // The size map read at startup, the same snapshot the scheduler routes with (#796).
+  let startupSizes: ReturnType<typeof resolveSandboxSizes>;
   let secretsProxy: SecretsProxy | undefined;
 
   if (v.worker) {
@@ -453,6 +457,7 @@ async function startBackground(
         : undefined;
     // The operator's map from runs-on labels to a sandbox size (none: providers' default size).
     const sandboxSizes = resolveSandboxSizes();
+    startupSizes = sandboxSizes;
     if (sandboxSizes)
       console.log(
         `sandbox sizes: ${Object.keys(sandboxSizes.classes).length} class(es), ${Object.keys(sandboxSizes.labels).length} label(s)`,
@@ -623,7 +628,7 @@ async function startBackground(
     // the scheduler applies, for a trusted run on this worker's provider and size map.
     containerJobs: workerProvider
       ? (need) => {
-          const reason = dockerRefusal(resolveSandboxSizes(), need, {
+          const reason = dockerRefusal(startupSizes, need, {
             untrusted: false,
             provider: workerProvider!.info,
           });
@@ -631,6 +636,7 @@ async function startBackground(
         }
       : undefined,
     runDefaultBranch: poller ? (scope, repo) => poller!.runDefaultBranch(scope, repo) : undefined,
+    providerEgress: () => workerProvider?.info.network.egressPolicy,
     async stop() {
       poller?.stop();
       if (reconcileTimer) clearInterval(reconcileTimer);
@@ -1307,6 +1313,7 @@ async function serve(args: string[]): Promise<void> {
         ...(laneSupervisor ? { releaseLane: laneSupervisor } : {}),
         ...(artifactStore ? { artifactBlobs: artifactStore } : {}),
         operatorOrgSlug: process.env.TURNTABLE_BOOTSTRAP_ORG?.trim() || "local",
+        providerEgress: () => background.providerEgress(),
         ...(oidc ? { oidc } : {}),
         ...(outboundWebhooks ? { outboundWebhooks } : {}),
         ...(claims ? { claims } : {}),

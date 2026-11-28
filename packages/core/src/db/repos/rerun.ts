@@ -11,6 +11,7 @@ import { DEPENDENCY_SKIP_PREFIX } from "./readiness";
 import { listRunAttempts } from "./api";
 import { createAttempt, getRun, type Job, listAttempts, listJobs, type Run } from "./index";
 import { type Scope, scoped } from "./scope";
+import { HELD_FOR_APPROVAL } from "./waiting";
 
 /** Reruns allowed per job key on one commit. The limit is the point: it stops retry loops. */
 export const MAX_RERUNS_PER_JOB_PER_SHA = 2;
@@ -225,7 +226,7 @@ export function rerunJobs(
       if (attempt && target === "awaiting_approval") {
         await h.orm
           .update(s.jobAttempts)
-          .set({ state: "awaiting_approval" })
+          .set({ state: "awaiting_approval", ...HELD_FOR_APPROVAL })
           .where(
             scoped(
               scope,

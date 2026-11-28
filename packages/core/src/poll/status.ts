@@ -24,7 +24,57 @@ export type RepoStatus = {
   authMode: PollAuthMode | null;
   /** The budget of that mode as last seen for this repo. */
   rateLimit: RateLimitInfo | undefined;
+  /** Open PRs the last successful poll refused to run, with why; never silent (#807). */
+  skippedPrs?: SkippedPr[] | undefined;
 };
+
+/** A pull request the PR gate did not turn into a run. */
+export type SkippedPr = {
+  number: number;
+  /** A short class: "author not allowlisted", or the gate's own reason. */
+  reason: string;
+  /** When this PR was first seen skipped for this reason (ms). */
+  at: number;
+};
+
+/** The most skipped PRs kept per repo. */
+export const MAX_SKIPPED_PRS = 20;
+
+const AUTHOR_REASON = "author not allowlisted";
+
+/** Maps a gate refusal to the reason an operator sees; author refusals share one label. */
+export function skipReasonOf(reason: string): string {
+  return /author is not on the allowlist|no author login|no linked GitHub account/.test(reason)
+    ? AUTHOR_REASON
+    : reason;
+}
+
+/**
+ * The PR refusals of one poll as the repo's skipped list: only `pr #N` entries, one per PR, the
+ * first-seen time kept while the reason is unchanged, newest first, capped. The cap keeps author
+ * refusals first, then the lowest PR numbers, so the kept set does not depend on `at` (a PR cut
+ * by the cap has no prior `at` and would otherwise rotate the list on every poll).
+ */
+export function skippedFromRefused(
+  refused: readonly { what: string; reason: string }[],
+  prior: readonly SkippedPr[] | undefined,
+  now: number,
+): SkippedPr[] {
+  const out = new Map<number, SkippedPr>();
+  for (const r of refused) {
+    const m = /^pr #(\d+)$/.exec(r.what);
+    if (!m) continue;
+    const number = Number(m[1]);
+    const reason = skipReasonOf(r.reason);
+    const was = prior?.find((p) => p.number === number && p.reason === reason);
+    out.set(number, { number, reason, at: was?.at ?? now });
+  }
+  const author = (p: SkippedPr): number => (p.reason === AUTHOR_REASON ? 0 : 1);
+  return [...out.values()]
+    .toSorted((a, b) => author(a) - author(b) || a.number - b.number)
+    .slice(0, MAX_SKIPPED_PRS)
+    .toSorted((a, b) => b.at - a.at || b.number - a.number);
+}
 
 /**
  * What the poller is doing, for monitoring (the `ingest_status` operation). In-process state: a

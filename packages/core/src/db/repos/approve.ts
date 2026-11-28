@@ -17,6 +17,7 @@ import { getEnvPolicy, plannedEnvironment } from "./approvals";
 import { supersedeOlderRuns } from "./poll";
 import { effectiveStates } from "./readiness";
 import { type Scope, scoped } from "./scope";
+import { releasedPatch } from "./waiting";
 
 export type RunApproval = {
   by: string;
@@ -127,7 +128,12 @@ export function approveRun(
       const waiting = (await listAttempts(tx, scope, job.id)).findLast(
         (a) => a.state === "awaiting_approval",
       );
-      if (waiting) await updateAttempt(tx, scope, waiting.id, { state: "queued" });
+      if (waiting) {
+        await updateAttempt(tx, scope, waiting.id, {
+          state: "queued",
+          ...releasedPatch(waiting, input.now ?? Date.now()),
+        });
+      }
       released += 1;
     }
     const approval: RunApproval = {

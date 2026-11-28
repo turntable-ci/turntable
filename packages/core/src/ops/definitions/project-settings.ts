@@ -3,9 +3,14 @@ import { z } from "zod";
 import {
   appendAudit,
   createProject,
+  getOrgById,
   getOrgBySlug,
+  getProject,
   getProjectBySlug,
+  getProjectEgress,
   getProjectSandboxSettings,
+  setProjectEgress,
+  type EgressMode,
   setProjectSandboxSettings,
   SNAPSHOT_NAME,
 } from "../../db/repos";
@@ -15,10 +20,17 @@ import { settingsRegistry, untrustedRunApprovalSetting } from "../../settings/de
 import { createSettingsRuntime } from "../../settings/resolve";
 import { lockSettingKey } from "../../db/repos/settings";
 import { effectiveApproval, guardSettingChange } from "../setting-guard";
-import { defineOp } from "../define";
+import { defineOp, type OpContext } from "../define";
 import { OpError } from "../errors";
 
+const EGRESS = ["none", "allowlist", "open"] as const;
+/** Tightness: a higher rank is tighter. */
+const EGRESS_RANK: Record<EgressMode, number> = { open: 0, allowlist: 1, none: 2 };
+
 const settingsShape = z.object({
+  egress: z
+    .enum(EGRESS)
+    .describe("The project's default sandbox egress: none (default), allowlist or open."),
   sandbox_snapshot: z
     .string()
     .nullable()
@@ -65,6 +77,7 @@ export const getProjectSettings = defineOp({
     );
     return {
       project: ctx.scope.projectId,
+      egress: await getProjectEgress(ctx.db, ctx.scope),
       sandbox_snapshot: s.sandboxSnapshot,
       max_concurrent: s.maxConcurrent,
       untrusted_run_approval: s.untrustedRunApproval,
@@ -167,6 +180,7 @@ export const setProjectSettings = defineOp({
     });
     return {
       project: project.id,
+      egress: await getProjectEgress(ctx.db, scope),
       sandbox_snapshot: to.sandboxSnapshot,
       max_concurrent: to.maxConcurrent,
       untrusted_run_approval: to.untrustedRunApproval,
@@ -222,5 +236,146 @@ export const createProjectOp = defineOp({
       },
     );
     return { org: org.slug, project: project.slug, id: project.id, name: project.name };
+  },
+});
+
+/**
+ * Checks a mode against what the provider can enforce. `allowlist` and `open` the provider cannot
+ * enforce are refused; `none` it cannot enforce is allowed (it is the safe default) with a warning,
+ * because every job would then fail its egress canary. Unknown capabilities (no provider in this
+ * process) refuse `allowlist` and `open` and warn for `none`.
+ */
+function egressCapability(ctx: OpContext, mode: EgressMode): string[] {
+  const caps = ctx.providerEgress?.();
+  if (!caps) {
+    if (mode !== "none")
+      throw new OpError(
+        "invalid_input",
+        `the provider's egress support is unknown here (no provider in this process), so egress ${mode} cannot be checked`,
+      );
+    return ["the provider's egress support is unknown here (no provider in this process)"];
+  }
+  if (caps.includes(mode)) return [];
+  if (mode === "none")
+    return [
+      "the provider cannot enforce egress none: jobs will fail the egress canary until the project is set to a mode it can enforce",
+    ];
+  throw new OpError("invalid_input", `the provider cannot enforce egress ${mode}`);
+}
+
+async function changeEgress(
+  ctx: OpContext,
+  op: string,
+  orgId: string,
+  projectId: string,
+  chains: readonly { orgId: string; projectId?: string }[],
+  target: { org: string; project: string },
+  to: EgressMode,
+  tightenOnly: boolean,
+) {
+  const scope = { orgId, projectId };
+  const from = await getProjectEgress(ctx.db, scope);
+  if (tightenOnly && EGRESS_RANK[to] < EGRESS_RANK[from])
+    throw new OpError(
+      "forbidden",
+      `egress can only be tightened here (open, then allowlist, then none); ${from} to ${to} is widening, which the instance operator does`,
+    );
+  // Checked even when the mode is unchanged: re-setting `none` must still warn.
+  const warnings = egressCapability(ctx, to);
+  if (from === to) return { project: projectId, from, to, warnings };
+  await setProjectEgress(ctx.db, scope, to);
+  for (const c of chains)
+    await appendAudit(ctx.db, c, {
+      principalKind: ctx.principal.kind,
+      principalId: ctx.principal.id,
+      op,
+      effect: "write",
+      outcome: "ok",
+      input: { target_org: target.org, target_project: target.project, from, to },
+    });
+  return { project: projectId, from, to, warnings };
+}
+
+const egressOutput = z.object({
+  project: z.string(),
+  from: z.enum(EGRESS),
+  to: z.enum(EGRESS),
+  warnings: z.array(z.string()).describe("Why the new mode may not work on the provider."),
+});
+
+export const setProjectEgressOp = defineOp({
+  name: "set_project_egress",
+  summary: "Set a project's default sandbox egress (instance administrator only).",
+  description:
+    "Sets the default egress of one project's sandboxes: `none` (default), `allowlist` or " +
+    "`open`. A repo's own `egress` in its poll config still overrides it, and an untrusted run " +
+    "never gets `open`. The mode is checked against what the provider can enforce: `allowlist` " +
+    "or `open` it cannot enforce is refused, `none` it cannot enforce is allowed with a warning " +
+    "(every job would fail the egress canary). Widening is an operator control, so this is the " +
+    "instance administrator's and never an MCP tool; an org owner can only tighten, with " +
+    "`tighten_project_egress`. Audited with the old and new value in the system org's chain and " +
+    "the org's own.",
+  input: z.object({
+    target_org: z.string().min(1).max(64).describe("Slug of the org."),
+    target_project: z.string().min(1).max(64).describe("Slug of the project."),
+    egress: z.enum(EGRESS),
+  }),
+  output: egressOutput,
+  effect: "write",
+  auth: { type: "instance", minRole: "admin" },
+  untrustedOutput: false,
+  scope: "org",
+  http: { method: "POST", path: "/instance/project-egress" },
+  mcp: false,
+  async handler(ctx, i) {
+    const org = await getOrgBySlug(ctx.db, i.target_org);
+    if (!org || org.slug === SYSTEM_ORG_SLUG) throw new OpError("not_found", "no such project");
+    const project = await getProjectBySlug(ctx.db, { orgId: org.id }, i.target_project);
+    if (!project) throw new OpError("not_found", "no such project");
+    return changeEgress(
+      ctx,
+      "set_project_egress",
+      org.id,
+      project.id,
+      [{ orgId: org.id, projectId: project.id }],
+      { org: org.slug, project: project.slug },
+      i.egress,
+      false,
+    );
+  },
+});
+
+export const tightenProjectEgress = defineOp({
+  name: "tighten_project_egress",
+  summary: "Tighten a project's default sandbox egress (org owner; never widens).",
+  description:
+    "Lowers the default egress of the project: open to allowlist or none, allowlist to none. " +
+    "Widening is refused here: only the instance administrator does that " +
+    "(`set_project_egress`). Same provider capability check as `set_project_egress`. Audited " +
+    "with the old and new value. Pass the project.",
+  input: z.object({ egress: z.enum(EGRESS) }),
+  output: egressOutput,
+  effect: "write",
+  auth: { type: "token", minRole: "owner" },
+  untrustedOutput: false,
+  scope: "project",
+  http: { method: "POST", path: "/project-egress" },
+  // Owners are people (a web session); no token holds the role, and an agent never changes egress.
+  mcp: false,
+  async handler(ctx, i) {
+    if (!ctx.scope.projectId) throw new OpError("invalid_input", "a project is required");
+    const org = await getOrgById(ctx.db, ctx.scope.orgId);
+    const project = await getProject(ctx.db, { orgId: ctx.scope.orgId }, ctx.scope.projectId);
+    if (!org || !project) throw new OpError("not_found", "no such project");
+    return changeEgress(
+      ctx,
+      "tighten_project_egress",
+      ctx.scope.orgId,
+      ctx.scope.projectId,
+      [{ orgId: ctx.scope.orgId, projectId: ctx.scope.projectId }],
+      { org: org.slug, project: project.slug },
+      i.egress,
+      true,
+    );
   },
 });

@@ -653,6 +653,27 @@
     }
   },
   {
+    "name": "get_project_pr_policy",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "org": {
+          "description": "Org slug. Defaults to the caller's org; a token can only name its own.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "project": {
+          "description": "Project slug. Required unless the token is scoped to one project.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "get_project_settings",
     "inputSchema": {
       "type": "object",

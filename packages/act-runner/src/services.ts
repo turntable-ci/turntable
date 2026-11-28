@@ -16,6 +16,8 @@ export type ServicePorts = Record<string, Record<string, string>>;
 
 // [ip:][host:]container[/proto]. Ranges and IPv6 addresses are refused.
 const PORT_SPEC = /^(?:(\d{1,3}(?:\.\d{1,3}){3}):)?(?:(\d{1,5}):)?(\d{1,5})(?:\/(tcp|udp|sctp))?$/i;
+// A docker publish flag in a service's options: -p, -P, --publish, --publish-all.
+const PUBLISH_FLAG = /(?:^|\s)(?:-[pP](?=$|[\s=\d[:])|--publish(?:-all)?(?=$|[\s=]))/;
 /** Where a port without a host port goes when its container port is already taken. */
 const FIRST_FREE = 49152;
 
@@ -37,6 +39,13 @@ export function bindServicePorts(
   type Parsed = { id: string; container: number; host?: number; proto?: string };
   const parsed: Parsed[] = [];
   for (const [id, spec] of Object.entries(services)) {
+    // act merges -p/--publish/-P from options into the port bindings, past the loopback rewrite.
+    if (isObj(spec) && typeof spec.options === "string" && PUBLISH_FLAG.test(spec.options)) {
+      throw new PlanError(
+        "services",
+        `service "${id}" options publish a port (-p, --publish or -P): use ports: instead`,
+      );
+    }
     if (!isObj(spec) || spec.ports === undefined) continue;
     if (!Array.isArray(spec.ports)) {
       throw new PlanError("services", `service "${id}" ports must be a list`);

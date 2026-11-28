@@ -175,16 +175,23 @@ export const SERVICE_UNHEALTHY_TEXT = "service container failed to start";
 /** Folds events into the facts runJob needs. */
 export function summarize(events: readonly ActEvent[]): JobSummary {
   const s: JobSummary = { finished: false, started: false, failedSteps: [] };
+  // act waits for services during job set-up, before any Main-stage step. A later error line with
+  // the same words is a step's own output (a `::error::` annotation), not a service failure.
+  let mainStarted = false;
   for (const e of events) {
     s.started = true;
+    if ((e.type === "step-start" || e.type === "step-end") && e.stage === "Main") {
+      mainStarted = true;
+    }
     if (e.type === "job-end") {
       s.finished = true;
       s.result = e.result;
     } else if (e.type === "step-end" && e.result === "failure") {
       s.failedSteps.push(e.name);
     } else if (
-      (e.type === "error" && e.message.includes(SERVICE_UNHEALTHY_TEXT)) ||
-      (e.type === "text" && e.text.includes(SERVICE_UNHEALTHY_TEXT))
+      !mainStarted &&
+      ((e.type === "error" && e.message.includes(SERVICE_UNHEALTHY_TEXT)) ||
+        (e.type === "text" && e.text.includes(SERVICE_UNHEALTHY_TEXT)))
     ) {
       s.serviceUnhealthy = true;
     }

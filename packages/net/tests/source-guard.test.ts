@@ -35,6 +35,7 @@ const ALLOWED_TESTS = new Set<string>([
   "packages/core/tests/version-header.test.ts", // the server under test, on 127.0.0.1
   "packages/core/tests/release-lane-supervisor.test.ts", // the release proxy under test, dialled on 127.0.0.1
   "packages/core/tests/attempt-adopt-credentials.test.ts", // the adopted proxy under test, dialled on 127.0.0.1
+  "packages/core/tests/attempt-adopt-hardening.test.ts", // the adopted proxy under test, raw CONNECT dial on 127.0.0.1
 ]);
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "data", "drizzle"]);

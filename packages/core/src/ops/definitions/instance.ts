@@ -1277,6 +1277,11 @@ export const instanceRunActivityOp = defineOp({
         jobs: activityCounts,
         running_attempts: z.int(),
         oldest_running_started_at: z.string().nullable(),
+        queued_by_reason: z
+          .record(z.string(), z.int())
+          .describe(
+            "Queued attempts by why they wait (needs, project_cap, org_cap, instance_cap, quota:<metric>, yield, drain, claimable; unknown before a claim pass has looked), with jobs held for an approval counted as approval. Omits reasons with no attempt.",
+          ),
       }),
     ),
     total_running_attempts: z.int(),
@@ -1306,6 +1311,7 @@ export const instanceRunActivityOp = defineOp({
           jobs: count(a?.jobs),
           running_attempts: a?.runningAttempts ?? 0,
           oldest_running_started_at: iso(a?.oldestRunningStartedAt),
+          queued_by_reason: a?.queuedByReason ?? {},
         };
       });
     const total = rows.reduce((n, r) => n + r.running_attempts, 0);

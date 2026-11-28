@@ -65,6 +65,14 @@ export type ApiCapabilities = {
   approve: boolean;
 };
 
+export type PrMode = "off" | "allowlist" | "approval";
+export interface PrPolicy {
+  prMode: PrMode;
+  authors: string[];
+  /** False when the project has no ingest settings, so there is nothing to change. */
+  ingestEnabled: boolean;
+}
+
 export interface TurntableApi {
   readonly capabilities: ApiCapabilities;
   listOrgs(): Promise<Org[]>;
@@ -234,6 +242,25 @@ export interface TurntableApi {
   }): Promise<Setting>;
   /** The org owner's view of the approval policy, defaults filled in (`get_approval_policy`). */
   getApprovalPolicy(): Promise<ApprovalPolicy>;
+  /** The project's default sandbox egress (`get_project_settings`). */
+  getProjectEgress(args: { project: string }): Promise<"none" | "allowlist" | "open">;
+  /**
+   * Tightens the project's default egress (`tighten_project_egress`, owner). It never widens: the
+   * server refuses, and the instance operator widens. Resolves with the provider warnings.
+   */
+  tightenProjectEgress(args: {
+    project: string;
+    egress: "none" | "allowlist" | "open";
+  }): Promise<{ egress: "none" | "allowlist" | "open"; warnings: string[] }>;
+  /** The project's PR mode and trusted authors (`get_project_pr_policy`). */
+  getProjectPrPolicy(args: { project: string }): Promise<PrPolicy>;
+  /**
+   * Sets the project's PR mode and authors (`change_project_pr_policy`, owner or admin). Only an
+   * owner may widen; a refusal rejects with the server's words.
+   */
+  changeProjectPrPolicy(
+    args: { project: string } & Omit<PrPolicy, "ingestEnabled">,
+  ): Promise<PrPolicy>;
   /**
    * Sets one environment's approval policy (`set_approval_policy`). A loosening carries the
    * passkey `stepUp` for exactly these arguments; a refusal rejects with the server's words.

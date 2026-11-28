@@ -58,9 +58,9 @@ export type OpContext = {
   githubFacts?: GithubFacts | undefined;
   /** Starts a `workflow_dispatch` run through the poller; absent where this process has none. */
   runDispatcher?: RunDispatcher | undefined;
-  /** Read-only reader of one repo of an installation (the onboarding preview); absent without a GitHub App. */
   /** Whether a `services:` or `container:` job can run here, for the preview (#796). */
   containerJobs?: ContainerJobs | undefined;
+  /** Read-only reader of one repo of an installation (the onboarding preview); absent without a GitHub App. */
   repoReader?: RepoReaderFactory | undefined;
   /** Starts a default-branch push run through the poller; absent where this process has none. */
   defaultBranchRunner?: DefaultBranchRunner | undefined;
@@ -70,6 +70,8 @@ export type OpContext = {
   userGithub?: UserGithub | undefined;
   /** The adapter that carried the call; undefined for in-process callers. */
   transport?: "mcp" | "rest" | undefined;
+  /** Egress modes the instance's sandbox provider can enforce; absent when this process has no provider (web-only). */
+  providerEgress?: (() => readonly string[] | undefined) | undefined;
   /** The instance's per-org concurrency cap, for the instance ops that clamp to it. */
   instanceOrgCap?: number | undefined;
   /** `org-slug/project-slug` pairs the running poll config names statically; empty when none. */

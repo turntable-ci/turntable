@@ -39,6 +39,7 @@ export * from "./pins";
 export * from "./verdicts";
 export * from "./events";
 export * from "./lease";
+export * from "./waiting";
 export * from "./org-summary";
 export * from "./run-summary";
 export * from "./instance-tokens";
@@ -673,6 +674,10 @@ export function updateAttempt(
     sandboxCreatedAt?: number | null;
     sandboxDestroyedAt?: number | null;
     sandboxTtlSeconds?: number | null;
+    /** Cleared and closed when the attempt starts (#775). */
+    waitingReason?: string | null;
+    waitingSince?: number | null;
+    waitedMs?: string;
   },
 ): Promise<JobAttempt | undefined> {
   const { errorDetail, ...cols } = patch;

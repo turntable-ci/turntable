@@ -15,6 +15,7 @@ import type { JobSearch } from "@/router";
 import { ApprovalNotice } from "./approval";
 import { retriedAutomatically } from "./infra-retry";
 import { FailureDigestPanel } from "./failure-digest";
+import { WaitingPanel } from "./waiting-panel";
 import { RerunButton } from "./rerun-dialog";
 import { EgressBadge, NoticeBadges, TrustBadge, useLogNotices } from "./trust";
 import { AttemptChip } from "./run-page";
@@ -117,6 +118,7 @@ export function JobPage() {
 
       <ApprovalNotice run={run} jobs={[job]} />
       <FailureDigestPanel job={job} attempt={selected} />
+      <WaitingPanel attempt={selected} />
 
       {attempts.length > 1 ? (
         <div

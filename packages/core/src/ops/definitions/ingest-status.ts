@@ -30,7 +30,7 @@ export const ingestStatusOp = defineOp({
   description:
     "Reports the poll ingester's health for the caller's org: for each polled repo the last poll " +
     "time and outcome (ok, rate_limited or error), the next poll time, consecutive failures and " +
-    "runs created, the auth mode each repo is polled with (anonymous, token, or installation: a " +
+    "runs created, the pull requests recently skipped by the author gate with the reason, the auth mode each repo is polled with (anonymous, token, or installation: a " +
     "read-only token minted for that one repo), plus GitHub's rate-limit budget (limit, remaining, " +
     "reset) as last observed, per repo and per mode (each mode has its own budget). " +
     "Use it to check that polling is alive and is not about to run out of API budget. Read-only " +
@@ -70,6 +70,21 @@ export const ingestStatusOp = defineOp({
         rate_limit: rateLimitShape
           .nullable()
           .describe("The budget of that mode as last seen for this repo."),
+        skipped_prs: z
+          .array(
+            z.object({
+              number: z.int(),
+              reason: z
+                .string()
+                .describe('Why no run was made, e.g. "author not allowlisted". Untrusted text.'),
+              since: z
+                .string()
+                .describe("When the last poll first saw it skipped for this reason."),
+            }),
+          )
+          .describe(
+            "Open pull requests the last successful poll did not run, so a skipped PR is never silent. Fix an author with change_project_pr_policy.",
+          ),
       }),
     ),
   }),
@@ -113,6 +128,11 @@ export const ingestStatusOp = defineOp({
         runs_created: r.runsCreated,
         auth_mode: r.authMode,
         rate_limit: wireRate(r.rateLimit),
+        skipped_prs: (r.skippedPrs ?? []).map((p) => ({
+          number: p.number,
+          reason: p.reason,
+          since: iso(p.at)!,
+        })),
       })),
     };
   },

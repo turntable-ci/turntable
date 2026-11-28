@@ -1079,3 +1079,36 @@ test("an anonymous poll makes no pulls/{n} calls and cancels nothing; an install
   expect(gh.state.calls.filter((c) => /\/pulls\/\d+$/.test(c.path))).toHaveLength(1);
   expect((await prRuns())[0]!.status).toBe("cancelled");
 });
+
+test("a PR skipped by the author gate is listed in ingest status, and runs once its bot author is allowlisted", async () => {
+  resetIngestStatus();
+  const gh = makeGithub();
+  gh.state.pulls = [
+    {
+      number: 9,
+      user: "app[bot]",
+      headSha: SHA("9"),
+      headRepo: "acme/web",
+      headAuthor: "app[bot]",
+    },
+  ];
+  let now = 1_800_000_000_000;
+  const mk = (authors: string[]) =>
+    new Poller({ db, config: config({ authors }), fetch: gh.fetch, now: () => now });
+  await mk(["octocat"]).pollAll();
+  expect(ingestStatus.repos.get("acme/web")?.skippedPrs).toEqual([
+    { number: 9, reason: "author not allowlisted", at: now },
+  ]);
+  expect((await listRuns(db, scope)).filter((r) => r.event === "pull_request")).toHaveLength(0);
+  // still skipped a poll later: the first-seen time is kept
+  const first = now;
+  now += 60_000;
+  await mk(["octocat"]).pollAll();
+  expect(ingestStatus.repos.get("acme/web")?.skippedPrs?.[0]?.at).toBe(first);
+  // allowlisting the exact bot login ingests the PR and clears the skip
+  await mk(["octocat", "app[bot]"]).pollAll();
+  expect(
+    (await listRuns(db, scope)).filter((r) => r.event === "pull_request").map((r) => r.prNumber),
+  ).toEqual([9]);
+  expect(ingestStatus.repos.get("acme/web")?.skippedPrs).toEqual([]);
+});

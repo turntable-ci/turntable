@@ -14,3 +14,5 @@ packages/core/tests/runner-labels.test.ts
 packages/core/tests/class-realisation.test.ts
 packages/core/tests/settings-writes.test.ts
 packages/core/tests/approval-policy-web.test.ts
+packages/core/tests/project-egress.test.ts
+packages/core/tests/project-pr-policy.test.ts

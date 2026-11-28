@@ -84,6 +84,8 @@ export type DispatchEnv = {
    * MCP call under a project's `no_agents` policy.
    */
   transport?: Transport | undefined;
+  /** Egress modes the sandbox provider can enforce; absent without a provider in this process. */
+  providerEgress?: (() => readonly string[] | undefined) | undefined;
   /** The instance's per-org concurrency cap (`--org-cap`), the ceiling `set_quotas` clamps to. */
   instanceOrgCap?: number | undefined;
   staticPollProjects?: readonly string[] | undefined;
@@ -229,6 +231,12 @@ export const SESSION_WRITE_OPS: ReadonlySet<string> = new Set([
   // An owner's session edits `approval_policy` (#664): tightening needs no step-up, loosening does
   // (the handler enforces it, and a quorum of approvers when the org has two or more).
   "set_approval_policy",
+  // An owner session tightens its project's egress (open, then allowlist, then none); widening
+  // is the instance administrator's op and the handler refuses it here.
+  "tighten_project_egress",
+  // An owner or admin session edits its project's PR mode and authors; the handler lets only an
+  // owner widen (#807).
+  "change_project_pr_policy",
   // A person's own notifications and preferences (#611): rows keyed by the session's user.
   "notifications_ack",
   "set_notification_prefs",
@@ -709,6 +717,7 @@ export async function dispatch(
       artifactBlobs: env.artifactBlobs,
       operatorOrgSlug: env.operatorOrgSlug,
       transport: env.transport,
+      providerEgress: env.providerEgress,
       instanceOrgCap: env.instanceOrgCap,
       staticPollProjects: env.staticPollProjects,
       backup: env.backup,

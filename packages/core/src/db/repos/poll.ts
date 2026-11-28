@@ -18,6 +18,7 @@ import {
 import { clearRecentDismissals, type DismissReason } from "./dismissals";
 import { getEnvPolicy, plannedEnvironment } from "./approvals";
 import { requireProject, type Scope, scoped } from "./scope";
+import { HELD_FOR_APPROVAL } from "./waiting";
 
 const SEEN_COLS = { orgId: s.pollSeen.orgId, projectId: s.pollSeen.projectId };
 
@@ -122,7 +123,10 @@ async function insertPlannedRun(
     const attempt = await createAttempt(tx, scope, { jobId: created.id, provider: input.provider });
     if ((input.hold || gated) && attempt) {
       await transitionJob(tx, scope, created.id, "awaiting_approval");
-      await updateAttempt(tx, scope, attempt.id, { state: "awaiting_approval" });
+      await updateAttempt(tx, scope, attempt.id, {
+        state: "awaiting_approval",
+        ...HELD_FOR_APPROVAL,
+      });
     }
   }
   if (input.hold) return (await setRunStatus(tx, scope, run.id, "awaiting_approval")) ?? run;

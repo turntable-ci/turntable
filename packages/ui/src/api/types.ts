@@ -131,6 +131,10 @@ export type JobAttempt = {
   sandboxDestroyedAt: number | null;
   /** Exact sandbox time, create to confirmed destroy. Null until both are known. */
   sandboxSeconds: number | null;
+  /** While queued: why it is not running (`needs`, `project_cap`, `quota:<metric>`, ...). Null otherwise. */
+  waitingReason?: string | null;
+  /** Queued time in ms by reason, closed when the attempt started. */
+  queuedMsByReason?: Record<string, number>;
 };
 
 /** Sandbox time for one UTC day, from the `sandbox_usage` op. */

@@ -14,8 +14,6 @@ const root = join(import.meta.dir, "..");
 export const ALLOWED: Record<string, string> = {
   "packages/provider-daytona/tests/conformance.test.ts":
     "live-gated: needs a real Daytona account (TT_DAYTONA_CONFORMANCE=1), run by packages/provider-daytona/scripts/live-check.ts",
-  "packages/core/tests/services-daytona-live.test.ts":
-    "live-gated: needs a real Daytona account and a Docker-capable snapshot (TT_DAYTONA_SERVICES_LIVE=1, TT_DAYTONA_DOCKER_SNAPSHOT)",
 };
 
 const TEST_FILE = /\.test\.ts$/;

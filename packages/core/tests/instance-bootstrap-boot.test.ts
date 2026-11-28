@@ -18,7 +18,12 @@ async function boot(
   mkdirSync(join(dir, "data"), { recursive: true });
   const p = Bun.spawn([process.execPath, MAIN, "serve", "--port", "0", "--data-dir", "data"], {
     cwd: dir,
-    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? dir, ...env },
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? dir,
+      TURNTABLE_ALLOW_ROOT: "1",
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

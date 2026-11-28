@@ -1,4 +1,4 @@
-import type { TurntableApi } from "../client";
+import type { PrPolicy, TurntableApi } from "../client";
 import type {
   ChangeEvent,
   ConnectionStatus,
@@ -69,6 +69,8 @@ export function createFixture(options: FixtureOptions = {}): Fixture {
     );
 
   const settings = createFixtureSettings(() => options.role ?? "owner");
+  let demoPr: PrPolicy = { prMode: "allowlist", authors: ["octocat"], ingestEnabled: true };
+  let demoEgress: "none" | "allowlist" | "open" = "open";
   const demoPolicy: ApprovalPolicy = {
     environments: ["production", "release"].map((environment) => ({
       environment,
@@ -235,6 +237,20 @@ export function createFixture(options: FixtureOptions = {}): Fixture {
     listSettings: (a) => delay(() => settings.list(a?.project)),
     setSetting: (a) => delay(() => settings.set(a)),
     getApprovalPolicy: () => delay(() => structuredClone(demoPolicy)),
+    getProjectPrPolicy: () => delay(() => structuredClone(demoPr)),
+    changeProjectPrPolicy: ({ prMode, authors }) =>
+      delay(() => {
+        demoPr = { prMode, authors, ingestEnabled: true };
+        return structuredClone(demoPr);
+      }),
+    getProjectEgress: () => delay(() => demoEgress),
+    tightenProjectEgress: ({ egress }) =>
+      delay(() => {
+        const rank = { open: 0, allowlist: 1, none: 2 };
+        if (rank[egress] < rank[demoEgress]) throw new Error("egress can only be tightened here");
+        demoEgress = egress;
+        return { egress, warnings: [] };
+      }),
     setApprovalPolicy: (a) =>
       delay(() => {
         const e = demoPolicy.environments.find((x) => x.environment === a.environment);

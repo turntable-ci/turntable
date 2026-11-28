@@ -616,7 +616,8 @@ describe("checks mode policy", () => {
           (n) =>
             /checks_mode|check_run|policy/.test(n) &&
             !n.includes("key_policy") &&
-            !n.includes("approval_policy"),
+            !n.includes("approval_policy") &&
+            !n.includes("pr_policy"),
         ),
     ).toEqual([]);
     // approval_policy is a different setting (#664): an owner edits it from a web session, with

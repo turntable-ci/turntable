@@ -232,6 +232,10 @@
     {
       "tag": "0058_attempt_adopt_spec",
       "sha256": "5dbed76bf3bee19a9add4062e8d328e110d23ed5615c2bce333fd65e54466a37"
+    },
+    {
+      "tag": "0059_attempt_waiting_reason",
+      "sha256": "6d0d21a8646337c2f57ec2ef7b5ebb6b40c0e11133e9c4849477ecb015d93200"
     }
   ],
   "pg": [
@@ -350,6 +354,10 @@
     {
       "tag": "0029_attempt_adopt_spec",
       "sha256": "bcd63272ec5a0b969426f402198a7cb3f43daec7ac1a44fb912e838fa558a60e"
+    },
+    {
+      "tag": "0030_attempt_waiting_reason",
+      "sha256": "89b461ccb3f7de26e5f5046d0a9906e262f8d45de47457721d24c7084fe90a28"
     }
   ]
 }

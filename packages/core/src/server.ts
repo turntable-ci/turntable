@@ -162,6 +162,8 @@ export type ServeOptions = {
   appManifest?: HostedManifestHandler;
   /** Proxies whose forwarded address the deploy gate's rate limit believes. */
   trustedProxies?: TrustedProxies;
+  /** Egress modes the sandbox provider can enforce, for `set_project_egress`. */
+  providerEgress?: (() => readonly string[] | undefined) | undefined;
   /** The instance's per-org concurrency cap, the ceiling `set_quotas` clamps to. */
   instanceOrgCap?: number | undefined;
   /** `org-slug/project-slug` pairs the poll config names statically, for `list_projects`. */
@@ -218,6 +220,7 @@ export function startServer(options: ServeOptions) {
     releaseLane: options.releaseLane,
     artifactBlobs: options.artifactBlobs,
     operatorOrgSlug: options.operatorOrgSlug,
+    providerEgress: options.providerEgress,
     instanceOrgCap: options.instanceOrgCap,
     staticPollProjects: options.staticPollProjects,
     doctor: options.doctor,

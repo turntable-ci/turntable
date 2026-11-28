@@ -368,5 +368,14 @@ export const migrations: Migration[] = [
     "statements": [
       "ALTER TABLE \"job_attempts\" ADD COLUMN \"adopt_spec\" text;"
     ]
+  },
+  {
+    "tag": "0030_attempt_waiting_reason",
+    "when": 1795837286863,
+    "statements": [
+      "ALTER TABLE \"job_attempts\" ADD COLUMN \"waiting_reason\" text;",
+      "ALTER TABLE \"job_attempts\" ADD COLUMN \"waiting_since\" bigint;",
+      "ALTER TABLE \"job_attempts\" ADD COLUMN \"waited_ms\" text;"
+    ]
   }
 ];
