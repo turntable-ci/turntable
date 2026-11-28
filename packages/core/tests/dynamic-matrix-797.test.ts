@@ -66,7 +66,7 @@ beforeEach(async () => {
   await setProjectChecksMode(db, world.scope, "live");
 });
 
-async function makeRun() {
+async function makeRun(approvalKind?: "untrusted_author" | "environment") {
   const wp = planWorkflow(
     WORKFLOW,
     { name: "push", ref: "refs/heads/main" },
@@ -86,6 +86,7 @@ async function makeRun() {
       name: n.name,
       needs: n.needs,
       planned: n,
+      ...(approvalKind && n.key === "test" ? { approvalKind } : {}),
     }))!;
     await createAttempt(db, world.scope, { jobId: job.id, provider: "fake" });
   }
@@ -176,6 +177,20 @@ describe("#797 dynamic matrix at run time", () => {
     expect([...runs.values()].find((b) => b.name === "turntable / test")?.conclusion).toBe(
       "failure",
     );
+  });
+
+  test("every leg keeps the placeholder's approval kind", async () => {
+    for (const kind of ["untrusted_author", "environment"] as const) {
+      const { api } = fakeApi();
+      const run = await makeRun(kind);
+      const matrix = JSON.stringify({ pkg: ["a", "b", "c"] });
+      await drive(matrix, new CheckReporter({ db, auth, api, sleep: async () => {} }));
+      const legs = (await listJobs(db, world.scope, run.id)).filter((j) =>
+        j.jobKey.startsWith("test["),
+      );
+      expect(legs.length).toBe(3);
+      expect(legs.map((j) => j.approvalKind)).toEqual([kind, kind, kind]);
+    }
   });
 
   test("over 256 combinations fails the job", async () => {

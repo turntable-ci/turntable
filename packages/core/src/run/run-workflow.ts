@@ -293,17 +293,22 @@ export async function runWorkflowLocal(o: RunWorkflowOptions): Promise<RunWorkfl
   const rows = await listJobs(o.db, o.scope, runId);
   const results: WorkflowJobResult[] = [];
   for (const n of wp.jobs) {
-    const row = rows.find((r) => r.jobKey === n.key);
-    const state: Verdict = row && TERMINAL.has(row.state) ? (row.state as Verdict) : "cancelled";
-    const reason = reasons.get(n.key) ?? (row ? await storedReason(o.db, o.scope, row.id) : "");
-    if (state === "skipped") o.out(`[${n.key}] skipped: ${reason}\n`);
-    results.push({
-      key: n.key,
-      name: n.name,
-      state,
-      reason,
-      ...(row?.outputs ? { outputs: JSON.parse(row.outputs) as Record<string, string> } : {}),
-    });
+    // A job with a run-time matrix is renamed to its first leg `id[0]`, and more legs follow.
+    const exact = rows.filter((r) => r.jobKey === n.key);
+    const matched = exact.length > 0 ? exact : rows.filter((r) => r.jobKey.startsWith(`${n.key}[`));
+    for (const row of matched.length > 0 ? matched : [undefined]) {
+      const key = row?.jobKey ?? n.key;
+      const state: Verdict = row && TERMINAL.has(row.state) ? (row.state as Verdict) : "cancelled";
+      const reason = reasons.get(key) ?? (row ? await storedReason(o.db, o.scope, row.id) : "");
+      if (state === "skipped") o.out(`[${key}] skipped: ${reason}\n`);
+      results.push({
+        key,
+        name: row && row.jobKey !== n.key ? row.name : n.name,
+        state,
+        reason,
+        ...(row?.outputs ? { outputs: JSON.parse(row.outputs) as Record<string, string> } : {}),
+      });
+    }
   }
   const status = (await getRun(o.db, o.scope, runId))?.status ?? "cancelled";
   const state: Verdict = TERMINAL.has(status) ? (status as Verdict) : "cancelled";

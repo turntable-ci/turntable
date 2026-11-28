@@ -286,6 +286,39 @@ describe("expanding a dynamic matrix", () => {
     });
   });
 
+  test("a value holding an expression is refused, never evaluated by act later", () => {
+    for (const m of [
+      { include: [{ pkg: "${{ toJSON(secrets) }}" }] },
+      { pkg: [["x", "a${{ secrets.T }}"]] },
+      { "k${{ x }}": ["a"] },
+    ]) {
+      const out = expandDynamicMatrix(placeholder(whole), {}, needs(JSON.stringify(m)));
+      expect(out).toMatchObject({ kind: "error" });
+      expect((out as { message: string }).message).toContain("never evaluated");
+    }
+  });
+
+  test("a huge include, exclude or product fails fast", () => {
+    const axis = (n: number) => Array.from({ length: n }, (_, i) => i);
+    const big = {
+      a: axis(128),
+      b: axis(128),
+      exclude: Array.from({ length: 30000 }, (_, i) => ({ a: i })),
+    };
+    const t0 = performance.now();
+    expect(expandDynamicMatrix(placeholder(whole), {}, needs(JSON.stringify(big)))).toMatchObject({
+      kind: "error",
+    });
+    expect(
+      expandDynamicMatrix(
+        placeholder(whole),
+        {},
+        needs(JSON.stringify({ a: axis(40), b: axis(40) })),
+      ),
+    ).toMatchObject({ kind: "error" });
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
   test("a leg whose runs-on names another OS is unsupported, others are not", () => {
     const out = expandDynamicMatrix(
       placeholder(whole),

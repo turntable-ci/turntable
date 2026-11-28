@@ -317,7 +317,13 @@ export const MAX_MATRIX_COMBINATIONS = 256;
  * overwrite an earlier include's added keys but never an axis value; an include that matches no
  * original combination becomes a combination of its own. May return no combinations.
  */
-export function matrixCombos(matrix: unknown): Combo[] {
+export function matrixCombos(
+  matrix: unknown,
+  limits: { maxProduct: number; maxEntries: number } = {
+    maxProduct: MAX_MATRIX_COMBINATIONS * 64,
+    maxEntries: Number.POSITIVE_INFINITY,
+  },
+): Combo[] {
   if (!isObj(matrix)) throw new PlanError("matrix", "strategy.matrix must be a mapping");
   const listOf = (k: string, v: unknown): Combo[] => {
     if (v === undefined) return [];
@@ -326,6 +332,8 @@ export function matrixCombos(matrix: unknown): Combo[] {
   };
   const include = listOf("include", matrix.include);
   const exclude = listOf("exclude", matrix.exclude);
+  if (include.length > limits.maxEntries || exclude.length > limits.maxEntries)
+    throw new PlanError("matrix", `matrix include and exclude are limited to ${limits.maxEntries}`);
   const axes = Object.entries(matrix).filter(([k]) => k !== "include" && k !== "exclude");
   let combos: Combo[] = [];
   if (axes.length > 0) {
@@ -337,7 +345,7 @@ export function matrixCombos(matrix: unknown): Combo[] {
           `matrix axis "${k}" must be a list (expressions are not supported)`,
         );
       }
-      if (combos.length * vals.length > MAX_MATRIX_COMBINATIONS * 64) {
+      if (combos.length * vals.length > limits.maxProduct) {
         throw new PlanError("matrix", "matrix is far over the 256 combination limit");
       }
       combos = combos.flatMap((c) => vals.map((v) => ({ ...c, [k]: v as Value })));
@@ -531,6 +539,23 @@ function resolveMatrixValue(v: unknown, ctx: ExprContext): Value {
   return v as Value;
 }
 
+/** The first string in a value (key or leaf) that holds `${{`, or undefined. */
+function findExpression(v: unknown): string | undefined {
+  if (typeof v === "string") return v.includes("${{") ? "${{" : undefined;
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const r = findExpression(x);
+      if (r !== undefined) return r;
+    }
+  } else if (isObj(v)) {
+    for (const [k, x] of Object.entries(v)) {
+      const r = findExpression(k) ?? findExpression(x);
+      if (r !== undefined) return r;
+    }
+  }
+  return undefined;
+}
+
 export type DynamicExpansion =
   | { kind: "legs"; legs: PlannedJob[] }
   /** The matrix has no combinations: GitHub skips the job. */
@@ -564,7 +589,16 @@ export function expandDynamicMatrix(
         kind: "error",
         message: `strategy.matrix did not evaluate to an object (got ${Array.isArray(resolved) ? "a list" : typeof resolved})`,
       };
-    combos = matrixCombos(resolved);
+    const bad = findExpression(resolved);
+    if (bad !== undefined)
+      return {
+        kind: "error",
+        message: `strategy.matrix value contains an expression (${bad}); values from needs outputs are data and are never evaluated`,
+      };
+    combos = matrixCombos(resolved, {
+      maxProduct: MAX_MATRIX_COMBINATIONS * 4,
+      maxEntries: MAX_MATRIX_COMBINATIONS * 4,
+    });
   } catch (e) {
     if (e instanceof ExprError || e instanceof PlanError)
       return { kind: "error", message: `strategy.matrix is not valid: ${e.message}` };
@@ -592,10 +626,7 @@ export function expandDynamicMatrix(
     const out: PlannedJob = {
       ...rest,
       key: `${job.id}[${i}]`,
-      name:
-        dyn.name === undefined
-          ? legName(job.id, undefined, leg, ctx)
-          : legName(job.id, dyn.name, leg, ctx),
+      name: legName(job.id, dyn.name, leg, ctx),
       matrix: leg,
     };
     let unsupported: string | undefined;
