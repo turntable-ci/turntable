@@ -105,6 +105,10 @@ const MCP_OFF: Record<string, string> = {
     "instance administrator ops are REST only: a project's snapshot and cap are operator controls, never an agent's",
   register_sandbox_image:
     "instance administrator ops are REST only: which image sandboxes start from is an operator control, never an agent's",
+  set_project_var_instance:
+    "instance administrator ops are REST only: a project's variables reach protected and release runs, so changing them for another org is an operator control, never an agent's",
+  delete_project_var_instance:
+    "instance administrator ops are REST only: a project's variables reach protected and release runs, so changing them for another org is an operator control, never an agent's",
   set_project_egress:
     "instance administrator ops are REST only: widening a project's egress is an operator control, never an agent's",
   tighten_project_egress:
