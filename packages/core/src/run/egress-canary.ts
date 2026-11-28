@@ -50,17 +50,22 @@ probe() {
 # the direct pass's --noproxy overrides), so also run a pass as a job step sees it. A proxy
 # does not matter to nc or bash. The passes run side by side so the worst case stays one pass
 # (targets x 3s), inside the probe's wall clock.
+# Each pass writes to its own file and the direct verdict is printed first, so the reported
+# detail does not depend on which pass finished first.
+o1=$(mktemp 2>/dev/null || echo "\${TMPDIR:-/tmp}/canary1.$$"); o2="$o1.env"
 mode=direct
-( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ) &
+( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ) >"$o1" 2>&1 &
 p1=$!
 p2=
 if [ "$tool" = curl ] || [ "$tool" = wget ]; then
-  ( mode=env; probe "$@" ) &
+  ( mode=env; probe "$@" ) >"$o2" 2>&1 &
   p2=$!
 fi
 wait $p1; rc1=$?
 rc2=0
 [ -z "$p2" ] || { wait $p2; rc2=$?; }
+cat "$o1" "$o2" 2>/dev/null
+rm -f "$o1" "$o2"
 [ $rc1 -eq 0 ] || exit $rc1
 exit $rc2
 `.replace(/\\\$/g, "$");
