@@ -200,8 +200,7 @@ describe("register_sandbox_image", () => {
     const row = sys.find(
       (x) => x.op === "register_sandbox_image" && x.outcome === "error:not_found",
     );
-    expect(JSON.stringify(row?.input)).toContain('"recorded":true');
-    expect(JSON.stringify(row?.input)).toContain('"state"');
+    expect(JSON.parse(String(row?.input))).toMatchObject({ recorded: true, state: "ready" });
   });
 
   test("a project snapshot not registered through Turntable shows no sandbox_image", async () => {
