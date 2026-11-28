@@ -424,3 +424,20 @@ test("the sandbox's effective TTL is recorded with it: the shorter of the ask an
   expect(await run(1800)).toEqual([960]); // the ask is shorter than the cap
   expect(await run(undefined)).toEqual([undefined]); // the provider reports none
 });
+
+test.skipIf(!hasCurl)("the canary still probes when no temp directory is writable", async () => {
+  const p = localProvider(REAL_PATH, { TMPDIR: "/nonexistent-dir", HOME: tmp });
+  const closed = await listening();
+  closed.close();
+  await Bun.sleep(30);
+  expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${closed.port}`] })).toEqual({
+    kind: "blocked",
+  });
+  const open = await listening();
+  try {
+    const v = await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] });
+    expect(v.kind).toBe("reachable");
+  } finally {
+    open.close();
+  }
+});
