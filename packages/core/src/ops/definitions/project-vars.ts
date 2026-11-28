@@ -12,7 +12,7 @@ import {
 } from "../../db/repos";
 import { SYSTEM_ORG_SLUG } from "../../audit/failures";
 import { ingestSettingsSchema, varsSchema, type IngestSettings } from "../../poll/config";
-import { decodeCursor, encodeCursor, nextCursor, pageInput } from "../common";
+import { nextCursor, pageInput } from "../common";
 import { defineOp, type OpContext } from "../define";
 import { OpError } from "../errors";
 
@@ -108,6 +108,28 @@ async function deleteVar(
   return { deleted: true };
 }
 
+/** Cursor over a variable name (names are not ULIDs, so the shared run-id cursor does not fit). */
+function encodeNameCursor(name: string): string {
+  return Buffer.from(JSON.stringify({ v: 1, name })).toString("base64url");
+}
+
+function decodeNameCursor(cursor: string): string {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      (parsed as { v?: unknown }).v === 1 &&
+      typeof (parsed as { name?: unknown }).name === "string"
+    ) {
+      return (parsed as { name: string }).name;
+    }
+  } catch {
+    // fall through
+  }
+  throw new OpError("invalid_input", "invalid cursor");
+}
+
 /** The target of an instance-administrator call: an org and project by slug, never the system org. */
 async function target(
   ctx: OpContext,
@@ -143,7 +165,7 @@ export const listProjectVarsOp = defineOp({
     requireScope(ctx);
     const raw = await getProjectIngest(ctx.db, ctx.scope);
     const cur = raw === null ? undefined : ingestSettingsSchema.safeParse(JSON.parse(raw)).data;
-    const after = i.cursor === undefined ? undefined : decodeCursor(i.cursor);
+    const after = i.cursor === undefined ? undefined : decodeNameCursor(i.cursor);
     const all = Object.entries(cur?.vars ?? {})
       .map(([name, value]) => ({ name, value, reserved: isReserved(name) }))
       .toSorted((x, y) => (x.name < y.name ? -1 : 1))
@@ -152,7 +174,7 @@ export const listProjectVarsOp = defineOp({
     const last = page.at(-1);
     return {
       vars: page,
-      next_cursor: all.length > i.limit && last ? encodeCursor(last.name) : null,
+      next_cursor: all.length > i.limit && last ? encodeNameCursor(last.name) : null,
     };
   },
 });

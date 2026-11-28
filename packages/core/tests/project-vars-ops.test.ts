@@ -117,6 +117,25 @@ test("an operator sets, replaces and deletes; a reader can list but not change",
   expect(Object.keys((await storedVars(a))!)).toEqual(["TURNTABLE_CI"]);
 });
 
+test("list_project_vars pages by name: the next_cursor of page 1 opens page 2", async () => {
+  for (const n of ["B_VAR", "C_VAR", "D_VAR"]) {
+    expect((await call(operator, "set_project_var", { name: n, value: "1" })).ok).toBe(true);
+  }
+  type Page = { vars: Var[]; next_cursor: string | null };
+  const p1 = await call(reader, "list_project_vars", { limit: 2 });
+  if (!p1.ok) throw new Error(p1.error.message);
+  const one = p1.output as Page;
+  expect(one.vars.map((v) => v.name)).toEqual(["B_VAR", "C_VAR"]);
+  expect(one.next_cursor).not.toBeNull();
+  const p2 = await call(reader, "list_project_vars", { limit: 2, cursor: one.next_cursor! });
+  if (!p2.ok) throw new Error(p2.error.message);
+  const two = p2.output as Page;
+  expect(two.vars.map((v) => v.name)).toEqual(["D_VAR", "TURNTABLE_CI"]);
+  expect(two.next_cursor).toBeNull();
+  const bad = await call(reader, "list_project_vars", { cursor: "not-a-cursor" });
+  expect(bad.ok).toBe(false);
+});
+
 test("names follow GitHub's rules and a project holds at most 1000", async () => {
   for (const name of ["GITHUB_FOO", "github_x", "1BAD", "has space", "__proto__"]) {
     const r = await call(operator, "set_project_var", { name, value: "v" });
