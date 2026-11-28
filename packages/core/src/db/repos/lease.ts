@@ -40,6 +40,7 @@ import {
   updateAttempt,
 } from "./index";
 import { appendAudit } from "./audit";
+import { applyExpansion } from "./dynamic-matrix";
 import { appendEvent } from "./events";
 import { notFrozen } from "./incident";
 import {
@@ -411,12 +412,28 @@ export function claimNextAttempt(db: Db, o: ClaimOptions): Promise<Claim | undef
                 c.job,
                 depStates(c.job, siblings, await latestReasons(tx, scope, c.job.runId)),
                 await getRun(tx, scope, c.job.runId),
-              ).decision;
-              if (decision === "wait") {
+              );
+              if (decision.decision === "wait") {
                 hold("needs");
                 continue;
               }
-              if (decision === "skip" || decision === "cancel") {
+              if (decision.decision === "expand") {
+                // A dynamic matrix: the placeholder becomes its legs, which are claimed on a later
+                // pass (each is its own queued job and gets its own check run). One that cannot be
+                // built stays queued and is claimed now, to fail with its reason.
+                const next = await applyExpansion(tx, scope, c.job, decision.expansion);
+                if (next === "done") {
+                  await resolveDependents(tx, scope, c.job.runId, readiness);
+                  await setRunStatus(
+                    tx,
+                    scope,
+                    c.job.runId,
+                    aggregateRunStatus(effectiveStates(await listJobs(tx, scope, c.job.runId))),
+                  );
+                  continue;
+                }
+              }
+              if (decision.decision === "skip" || decision.decision === "cancel") {
                 await resolveDependents(tx, scope, c.job.runId, readiness);
                 continue;
               }

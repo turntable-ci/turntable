@@ -2,6 +2,7 @@ import { parse } from "yaml";
 import {
   ExprError,
   evaluateCondition,
+  evaluate,
   interpolate,
   referencedContexts,
   wholeExpression,
@@ -87,6 +88,14 @@ const UPLOAD_ARTIFACT = /^actions\/upload-artifact(\/[^@\s]*)?@/i;
 const NO_ARTIFACT_ACTION =
   /^(actions\/(checkout|setup-[a-z0-9-]+|cache(\/(restore|save))?)|oven-sh\/setup-bun|dtolnay\/rust-toolchain|docker\/setup-[a-z0-9-]+)(@|$)/i;
 
+/** What a dynamic-matrix placeholder keeps to expand later: the workflow's own text, unevaluated. */
+export interface DynamicMatrix {
+  matrix: unknown;
+  name?: string;
+  runsOn?: unknown;
+  continueOnError?: unknown;
+}
+
 export interface PlannedJob {
   /** Unique within the run: the job id, or `id[n]` for a matrix leg. */
   key: string;
@@ -99,6 +108,13 @@ export interface PlannedJob {
   /** The job ids named in `needs:`. */
   needsIds: string[];
   matrix?: Record<string, Value>;
+  /**
+   * Set on a job whose `strategy.matrix` is built from an expression (`fromJSON(needs.x.outputs.m)`).
+   * It is one placeholder until its needs finish; the scheduler then calls `expandDynamicMatrix`
+   * and replaces it with one job per combination. Holds the raw matrix and the fields a leg's
+   * matrix values can change.
+   */
+  dynamicMatrix?: DynamicMatrix;
   /** The job's `if:` as written. Evaluated at schedule time with the needs results. */
   ifExpr?: string | boolean;
   /** False when `if:` depends only on plan-time data and is false: the job is skipped. */
@@ -290,11 +306,26 @@ type Combo = Record<string, Value>;
 const subsetMatch = (small: Combo, big: Combo): boolean =>
   Object.entries(small).every(([k, v]) => k in big && JSON.stringify(big[k]) === JSON.stringify(v));
 
-/** Expands a static matrix: cartesian product, then exclude, then include. */
-export function expandMatrix(matrix: unknown): Combo[] {
+/** GitHub's cap on the combinations of one matrix. */
+export const MAX_MATRIX_COMBINATIONS = 256;
+
+/**
+ * Expands a matrix with GitHub's rules: the cartesian product of the axes, minus `exclude`
+ * entries (each removes every combination it is a subset of), then `include` entries. An include
+ * is merged into every original combination whose original axis values it matches (all of them
+ * when it names no axis), adding only keys that are not original axes, so a later include can
+ * overwrite an earlier include's added keys but never an axis value; an include that matches no
+ * original combination becomes a combination of its own. May return no combinations.
+ */
+export function matrixCombos(matrix: unknown): Combo[] {
   if (!isObj(matrix)) throw new PlanError("matrix", "strategy.matrix must be a mapping");
-  const include = Array.isArray(matrix.include) ? (matrix.include.filter(isObj) as Combo[]) : [];
-  const exclude = Array.isArray(matrix.exclude) ? (matrix.exclude.filter(isObj) as Combo[]) : [];
+  const listOf = (k: string, v: unknown): Combo[] => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v)) throw new PlanError("matrix", `matrix ${k} must be a list of mappings`);
+    return v.filter(isObj) as Combo[];
+  };
+  const include = listOf("include", matrix.include);
+  const exclude = listOf("exclude", matrix.exclude);
   const axes = Object.entries(matrix).filter(([k]) => k !== "include" && k !== "exclude");
   let combos: Combo[] = [];
   if (axes.length > 0) {
@@ -306,25 +337,41 @@ export function expandMatrix(matrix: unknown): Combo[] {
           `matrix axis "${k}" must be a list (expressions are not supported)`,
         );
       }
+      if (combos.length * vals.length > MAX_MATRIX_COMBINATIONS * 64) {
+        throw new PlanError("matrix", "matrix is far over the 256 combination limit");
+      }
       combos = combos.flatMap((c) => vals.map((v) => ({ ...c, [k]: v as Value })));
     }
     combos = combos.filter((c) => !exclude.some((e) => subsetMatch(e, c)));
   }
   const original = new Set(axes.map(([k]) => k));
+  const base = combos;
+  const added: Combo[] = [];
   for (const inc of include) {
     const originalPart: Combo = Object.fromEntries(
       Object.entries(inc).filter(([k]) => original.has(k)),
     );
     let matched = false;
-    for (const c of combos) {
-      if (subsetMatch(originalPart, c) && Object.keys(originalPart).length > 0) {
+    for (const c of base) {
+      if (subsetMatch(originalPart, c)) {
         matched = true;
         for (const [k, v] of Object.entries(inc)) if (!original.has(k)) c[k] = v;
       }
     }
-    if (!matched) combos.push({ ...inc });
+    if (!matched) added.push({ ...inc });
   }
+  return [...base, ...added];
+}
+
+/** Expands a static matrix. A matrix with no combinations or over 256 is a plan error. */
+export function expandMatrix(matrix: unknown): Combo[] {
+  const combos = matrixCombos(matrix);
   if (combos.length === 0) throw new PlanError("matrix", "matrix expands to no jobs");
+  if (combos.length > MAX_MATRIX_COMBINATIONS)
+    throw new PlanError(
+      "matrix",
+      `matrix expands to ${combos.length} jobs; the limit is ${MAX_MATRIX_COMBINATIONS}`,
+    );
   return combos;
 }
 
@@ -454,6 +501,122 @@ function runsOnLabelList(runsOn: unknown, ctx: ExprContext): string[] {
     }
   }
   return out;
+}
+
+/** A job's display name: its interpolated `name:`, else `id (v1, v2)` for a matrix leg. */
+function legName(id: string, rawName: unknown, leg: Combo | undefined, ctx: ExprContext): string {
+  try {
+    if (typeof rawName === "string") return interpolate(rawName, ctx);
+    if (leg)
+      return `${id} (${Object.values(leg)
+        .map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v)))
+        .join(", ")})`;
+  } catch (e) {
+    if (!(e instanceof ExprError)) throw e;
+    return rawName as string;
+  }
+  return id;
+}
+
+/** Resolves the `${{ }}` in a matrix's raw value: a whole expression keeps its type, text is interpolated. */
+function resolveMatrixValue(v: unknown, ctx: ExprContext): Value {
+  if (typeof v === "string") {
+    const whole = wholeExpression(v);
+    if (whole !== undefined) return evaluate(whole, ctx);
+    return v.includes("${{") ? interpolate(v, ctx) : v;
+  }
+  if (Array.isArray(v)) return v.map((x) => resolveMatrixValue(x, ctx));
+  if (isObj(v))
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolveMatrixValue(x, ctx)]));
+  return v as Value;
+}
+
+export type DynamicExpansion =
+  | { kind: "legs"; legs: PlannedJob[] }
+  /** The matrix has no combinations: GitHub skips the job. */
+  | { kind: "empty"; reason: string }
+  /** The matrix could not be built (bad JSON, wrong shape, over the limit): the job fails. */
+  | { kind: "error"; message: string };
+
+/**
+ * Expands a dynamic-matrix placeholder once its needs are done. `contexts` are the run's github,
+ * vars, inputs and env; `needs` is the `needs` context (result and outputs per job id). Never
+ * throws for a bad matrix: the outcome says whether to skip or fail the job. Each leg is the
+ * placeholder with its own key `id[n]`, matrix values, name, and the fields matrix values can
+ * change (runs-on, continue-on-error).
+ */
+export function expandDynamicMatrix(
+  job: PlannedJob,
+  contexts: Readonly<Record<string, Value>>,
+  needs: Readonly<Record<string, Value>>,
+): DynamicExpansion {
+  const dyn = job.dynamicMatrix;
+  if (!dyn) return { kind: "error", message: "job has no dynamic matrix" };
+  const base: ExprContext = {
+    contexts: { ...contexts, needs, matrix: {}, runner: { os: "Linux", arch: "X64" } },
+    status: { needs: [], cancelled: false },
+  };
+  let combos: Combo[];
+  try {
+    const resolved = resolveMatrixValue(dyn.matrix, base);
+    if (!isObj(resolved))
+      return {
+        kind: "error",
+        message: `strategy.matrix did not evaluate to an object (got ${Array.isArray(resolved) ? "a list" : typeof resolved})`,
+      };
+    combos = matrixCombos(resolved);
+  } catch (e) {
+    if (e instanceof ExprError || e instanceof PlanError)
+      return { kind: "error", message: `strategy.matrix is not valid: ${e.message}` };
+    throw e;
+  }
+  if (combos.length === 0)
+    return { kind: "empty", reason: "matrix expanded to no jobs, so the job is skipped" };
+  if (combos.length > MAX_MATRIX_COMBINATIONS)
+    return {
+      kind: "error",
+      message: `matrix expands to ${combos.length} jobs; the limit is ${MAX_MATRIX_COMBINATIONS}`,
+    };
+  const { dynamicMatrix: _drop, ...rest } = job;
+  const legs = combos.map((leg, i): PlannedJob => {
+    const ctx: ExprContext = {
+      contexts: {
+        ...contexts,
+        needs,
+        runner: { os: "Linux", arch: "X64" },
+        matrix: leg,
+        strategy: { "job-index": i, "job-total": combos.length, "fail-fast": job.failFast },
+      },
+      status: { needs: [], cancelled: false },
+    };
+    const out: PlannedJob = {
+      ...rest,
+      key: `${job.id}[${i}]`,
+      name:
+        dyn.name === undefined
+          ? legName(job.id, undefined, leg, ctx)
+          : legName(job.id, dyn.name, leg, ctx),
+      matrix: leg,
+    };
+    let unsupported: string | undefined;
+    try {
+      unsupported = runsOnReason(dyn.runsOn, ctx);
+      const v = dyn.continueOnError;
+      if (v !== undefined)
+        out.continueOnError = typeof v === "boolean" ? v : evaluateCondition(String(v), ctx);
+    } catch (e) {
+      if (!(e instanceof ExprError)) throw e;
+      unsupported ??= `continue-on-error expression: ${e.message}`;
+    }
+    const labels = runsOnLabelList(dyn.runsOn, ctx);
+    if (labels.length > 0) out.runsOn = labels;
+    if (unsupported && out.unsupported === undefined) {
+      out.unsupported = unsupported;
+      delete out.needsDocker;
+    }
+    return out;
+  });
+  return { kind: "legs", legs };
 }
 
 // ---- planning ----
@@ -598,24 +761,14 @@ export function planWorkflow(
         },
         status: { needs: [], cancelled: false },
       };
-      let name = id;
-      try {
-        if (typeof job.name === "string") name = interpolate(job.name, ctx);
-        else if (leg)
-          name = `${id} (${Object.values(leg)
-            .map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v)))
-            .join(", ")})`;
-      } catch (e) {
-        if (!(e instanceof ExprError)) throw e;
-        name = job.name as string;
-      }
+      const name = legName(id, job.name, leg, ctx);
       const containerReason = containerModeReason(job);
+      // A dynamic matrix's legs read `matrix.*` in runs-on, so the placeholder leaves runs-on to
+      // the expansion (see `expandDynamicMatrix`).
       let unsupported: string | undefined =
         dockerReason(job, opts.readFile) ??
         (job.uses !== undefined ? "calls a reusable workflow (uses:)" : undefined) ??
-        runsOnReason(job["runs-on"], ctx);
-      if (dynamicMatrix)
-        unsupported ??= "matrix built from an expression (fromJSON) is not supported yet";
+        (dynamicMatrix ? undefined : runsOnReason(job["runs-on"], ctx));
       // A literal environment can be gated by approval policy. One built from an expression
       // cannot be known at plan time, so the job is refused rather than run ungated.
       let environment: string | undefined;
@@ -631,7 +784,8 @@ export function planWorkflow(
           coe = typeof v === "boolean" ? v : evaluateCondition(String(v), ctx);
         } catch (e) {
           if (!(e instanceof ExprError)) throw e;
-          unsupported ??= `continue-on-error expression: ${e.message}`;
+          // A dynamic matrix's legs evaluate it with their own matrix values.
+          if (!dynamicMatrix) unsupported ??= `continue-on-error expression: ${e.message}`;
         }
       }
       const node: PlannedJob = {
@@ -641,6 +795,18 @@ export function planWorkflow(
         needs: [],
         needsIds,
         ...(leg ? { matrix: leg } : {}),
+        ...(dynamicMatrix
+          ? {
+              dynamicMatrix: {
+                matrix: strategy.matrix,
+                ...(typeof job.name === "string" ? { name: job.name } : {}),
+                runsOn: job["runs-on"],
+                ...(job["continue-on-error"] !== undefined
+                  ? { continueOnError: job["continue-on-error"] }
+                  : {}),
+              },
+            }
+          : {}),
         ...(job.if !== undefined ? { ifExpr: job.if as string | boolean } : {}),
         ...(unsupported ? { unsupported } : {}),
         ...(containerReason && !unsupported ? { needsDocker: containerReason } : {}),
@@ -677,7 +843,7 @@ export function planWorkflow(
           ? { artifactAccess: false as const }
           : {}),
         ...(() => {
-          const runsOn = runsOnLabelList(job["runs-on"], ctx);
+          const runsOn = dynamicMatrix ? [] : runsOnLabelList(job["runs-on"], ctx);
           return runsOn.length > 0 ? { runsOn } : {};
         })(),
       };

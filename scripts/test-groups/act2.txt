@@ -7,3 +7,4 @@ packages/act-runner/tests/vendored-ci-plan.test.ts
 packages/act-runner/tests/dogfood-ci-plan.test.ts
 packages/act-runner/tests/step-env.test.ts
 packages/act-runner/tests/shim-resync.test.ts
+packages/act-runner/tests/dynamic-matrix.test.ts

@@ -108,7 +108,7 @@ jobs:
     expect(p.jobs[2]?.needs).toEqual(["test[0]", "test[1]"]);
   });
 
-  test("a matrix built from an expression is marked unsupported, not guessed", () => {
+  test("a matrix built from an expression is a placeholder, expanded when its needs finish", () => {
     const p = planWorkflow(
       `on: push
 jobs:
@@ -121,7 +121,10 @@ jobs:
       push,
       { readFile },
     );
-    expect(p.jobs[0]?.unsupported).toContain("fromJSON");
+    const a = p.jobs.find((j) => j.id === "a");
+    expect(a?.unsupported).toBeUndefined();
+    expect(a?.key).toBe("a");
+    expect(a?.dynamicMatrix?.matrix).toBe("${{ fromJSON(needs.x.outputs.m) }}");
   });
 });
 

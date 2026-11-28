@@ -3,6 +3,7 @@
 // `needs`. Dependents are resolved the moment a dependency ends, in the same transaction, so a
 // job that can never run does not sit in the queue.
 import type { Db } from "..";
+import type { Expansion } from "./dynamic-matrix";
 import { aggregateRunStatus } from "../job-state";
 import type { JobState } from "../schema";
 import { listRunAttempts } from "./api";
@@ -40,12 +41,15 @@ export type DepState = {
  * its `needs` record, pass the planned job).
  *
  * - `ready`: may be claimed now.
+ * - `expand`: a job with a matrix built from an expression is ready to be replaced by its legs
+ *   (or skipped, or failed): see `applyExpansion`.
  * - `wait`: not yet; a dependency is still going.
  * - `skip`: can never run (a dependency failed); becomes `skipped`. `reason` is for humans.
  * - `cancel`: can never run and the engine wants it `cancelled` (for example a `cancel` policy).
  */
 export type Decision =
   | { decision: "ready" }
+  | { decision: "expand"; expansion: Expansion }
   | { decision: "wait" }
   | { decision: "skip"; reason: string }
   | { decision: "cancel"; reason: string };

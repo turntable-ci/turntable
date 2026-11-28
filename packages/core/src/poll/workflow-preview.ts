@@ -18,7 +18,6 @@ export type RefusalKind =
   | "arm"
   | "docker"
   | "reusable"
-  | "matrix_expression"
   | "environment_expression"
   | "expression"
   | "plan_error"
@@ -32,7 +31,6 @@ export const FIX_BY_KIND: Readonly<Record<RefusalKind, string>> = {
   arm: GATE,
   docker: `${GATE}, or ask the instance operator for a Docker-capable size class`,
   reusable: `${GATE}, or inline the called workflow's jobs`,
-  matrix_expression: `${GATE}, or write the matrix out as a literal list`,
   environment_expression: `${GATE}, or name the environment literally`,
   expression: `${GATE}, or simplify the expression`,
   plan_error: "fix the workflow so it parses and plans, then preview again",
@@ -44,7 +42,6 @@ export function refusalKind(why: string): RefusalKind {
   if (/runner \(`/.test(why) && /macOS|Windows/.test(why)) return "other_os";
   if (/arm64 runner/.test(why)) return "arm";
   if (/reusable workflow/.test(why)) return "reusable";
-  if (/matrix built from an expression/.test(why)) return "matrix_expression";
   if (/^unsupported: environment:|^environment:/.test(why)) return "environment_expression";
   if (/docker|services:|container:/i.test(why)) return "docker";
   if (/if:|continue-on-error expression/.test(why)) return "expression";
@@ -251,6 +248,10 @@ export function previewWorkflow(
         reason: "its `if:` condition is false on Turntable before the job starts",
       });
     }
+    // A matrix built from needs outputs is known only once they finish: it runs, as many jobs as
+    // the expression gives.
+    if (legs.some((n) => n.dynamicMatrix))
+      return row(id, { verdict: "run", reason: "expanded at run time" });
     return row(id, { verdict: "run" });
   });
   return { ...base, jobs };
