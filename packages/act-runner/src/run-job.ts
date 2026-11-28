@@ -616,6 +616,16 @@ export function decide(status: ExecStatus, sum: ReturnType<typeof summarize>): J
       reason: `act exited 0 but job result was ${sum.result ?? "missing"}`,
     };
   }
+  // A service that never became healthy: the steps did not start, so it is not the job's failure.
+  if (sum.serviceUnhealthy && sum.result !== "success") {
+    return {
+      state: "infra_error",
+      infraKind: "service_unhealthy",
+      exitCode: code,
+      reason:
+        "a service container did not become healthy within act's 5 minute limit, so the steps did not start (check the service's image, env and --health-cmd)",
+    };
+  }
   if (sum.started && sum.finished && sum.result === "failure") {
     const steps = sum.failedSteps.length ? `: ${sum.failedSteps.join(", ")}` : "";
     return { state: "failure", exitCode: code, reason: `job failed${steps}` };

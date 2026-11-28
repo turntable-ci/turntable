@@ -162,6 +162,19 @@ describe("graph errors and unsupported jobs", () => {
     expect(p.jobs[0]?.unsupported).toBeUndefined();
   });
 
+  test.each([
+    ['options: --health-cmd "x ${{ env.A }}"', "options cannot use an expression"],
+    ["ports:\n          - 5432:5432\n          - 5432:5433", "services:"],
+  ])("services the split would refuse are unsupported in the plan: %s", (extra, reason) => {
+    const p = planWorkflow(
+      `on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: postgres\n        ${extra}\n    steps: []\n`,
+      push,
+      { readFile },
+    );
+    expect(p.jobs[0]?.unsupported).toContain(reason);
+    expect(p.jobs[0]?.needsDocker).toBeUndefined();
+  });
+
   test("services with a docker command in a step stays unsupported (container mode gives no socket)", () => {
     const p = planWorkflow(
       `on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: postgres\n    steps:\n      - run: docker ps\n`,

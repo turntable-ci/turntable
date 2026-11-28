@@ -41,7 +41,11 @@ import { pageCsp, renderPage, servePageAsset } from "./pages/server-pages";
 import { serveUi } from "./ui-assets";
 import { BUILD_SHA, BUILD_TIME, VERSION } from "./version";
 import type { RunDispatcher } from "./poll/dispatch";
-import type { DefaultBranchRunner, RepoReaderFactory } from "./poll/onboarding-forge";
+import type {
+  ContainerJobs,
+  DefaultBranchRunner,
+  RepoReaderFactory,
+} from "./poll/onboarding-forge";
 
 const PLACEHOLDER_HTML = renderPage({
   title: "Turntable",
@@ -149,6 +153,8 @@ export type ServeOptions = {
   /** Starts `workflow_dispatch` runs (the poller), for `run_dispatch`. */
   runDispatcher?: RunDispatcher;
   repoReader?: RepoReaderFactory;
+  /** The preview's answer for a `services:` or `container:` job (#796). */
+  containerJobs?: ContainerJobs;
   defaultBranchRunner?: DefaultBranchRunner;
   /** Resolves a GitHub login to its numeric id, for invites. */
   githubUsers?: GithubUserLookup;
@@ -208,6 +214,7 @@ export function startServer(options: ServeOptions) {
     githubUsers: options.githubUsers,
     runDispatcher: options.runDispatcher,
     repoReader: options.repoReader,
+    containerJobs: options.containerJobs,
     defaultBranchRunner: options.defaultBranchRunner,
     webhooks: options.outboundWebhooks,
     webauthn: options.webauthn,

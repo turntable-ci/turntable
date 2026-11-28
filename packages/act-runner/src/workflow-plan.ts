@@ -10,6 +10,7 @@ import {
   type Value,
 } from "./expr";
 import { lintError, localActionDir, PlanError, type PlanWarning, untrustedIn } from "./plan";
+import { bindServicePorts } from "./services";
 import { wantsIdTokenIn } from "./permissions";
 import { findHeadCheckouts, isPrivilegedEvent } from "./taint";
 import {
@@ -914,6 +915,17 @@ export function planWorkflow(
         dockerReason(job, opts.readFile) ??
         (job.uses !== undefined ? "calls a reusable workflow (uses:)" : undefined) ??
         (dynamicMatrix ? undefined : runsOnReason(job["runs-on"], ctx));
+      // The split refuses these at run time; say so in the plan and the preview instead. A dynamic
+      // matrix placeholder skips this: its services may use matrix.* values, and each expanded leg
+      // goes through prepareServices at run time.
+      if (isObj(job.services) && !dynamicMatrix) {
+        try {
+          bindServicePorts(job.services, (s) => (s.includes("${{") ? interpolate(s, ctx) : s));
+        } catch (e) {
+          if (!(e instanceof PlanError || e instanceof ExprError)) throw e;
+          unsupported ??= `services: ${e.message}`;
+        }
+      }
       // A literal environment can be gated by approval policy. One built from an expression
       // cannot be known at plan time, so the job is refused rather than run ungated.
       let environment: string | undefined;

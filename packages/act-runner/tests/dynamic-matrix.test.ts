@@ -1,6 +1,7 @@
 // #797: strategy.matrix built from needs outputs. Matrix shapes follow GitHub's documented rules
 // for include and exclude, and its 256 combination limit.
 import { describe, expect, test } from "bun:test";
+import { parse } from "yaml";
 import {
   expandDynamicMatrix,
   expandMatrix,
@@ -9,6 +10,7 @@ import {
   planWorkflow,
   type PlannedJob,
 } from "../src";
+import { splitJob } from "../src/split";
 
 const push = { name: "push", ref: "refs/heads/main" };
 
@@ -443,5 +445,45 @@ describe("expanding a dynamic matrix", () => {
     const p = placeholder("${{ fromJSON(vars.M) }}");
     const out = expandDynamicMatrix(p, { vars: { M: '{"os":["ubuntu-latest"]}' } }, {});
     expect(out.kind).toBe("legs");
+  });
+});
+
+describe("services in a dynamic matrix job", () => {
+  const yaml = `on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    outputs:
+      m: \${{ steps.s.outputs.m }}
+    steps: []
+  build:
+    needs: x
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: \${{ fromJSON(needs.x.outputs.m) }}
+    services:
+      db:
+        image: postgres:\${{ matrix.pg }}
+        ports:
+          - \${{ matrix.port }}:5432
+    steps: []
+`;
+
+  test("a service reading matrix.* plans OK, and the expanded leg binds its ports", () => {
+    const plan = planWorkflow(yaml, push, { readFile: () => undefined });
+    const p = plan.jobs.find((j) => j.id === "build") as PlannedJob;
+    expect(p.dynamicMatrix).toBeDefined();
+    expect(p.unsupported).toBeUndefined();
+    const m = JSON.stringify({ pg: ["15"], port: [5433] });
+    const out = expandDynamicMatrix(p, {}, needs(m));
+    if (out.kind !== "legs") throw new Error(out.kind);
+    const leg = out.legs[0] as PlannedJob;
+    expect(leg.unsupported).toBeUndefined();
+    const split = parse(splitJob(yaml, leg, {}, { event: "push" })) as {
+      jobs: Record<string, { services: Record<string, { image: string; ports: string[] }> }>;
+    };
+    const db = split.jobs.build?.services.db;
+    expect(db?.image).toBe("postgres:${{ matrix.pg }}"); // act resolves it
+    expect(db?.ports).toEqual(["127.0.0.1:5433:5432"]);
   });
 });

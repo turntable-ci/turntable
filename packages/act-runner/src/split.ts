@@ -2,6 +2,7 @@ import { parse, stringify } from "yaml";
 import { interpolate, type ExprContext, type Value } from "./expr";
 import { layoutFor } from "./layout";
 import { PlanError } from "./plan";
+import { prepareServices } from "./services";
 import { stepMatches, type PlannedJob } from "./workflow-plan";
 
 type Obj = Record<string, unknown>;
@@ -48,6 +49,8 @@ function onFor(doc: Obj, event: string): unknown {
  *  - the matrix becomes one literal leg;
  *  - a final `if: always()` step writes each declared job output to a file, because act's JSON
  *    stream does not carry outputs.
+ *  - `services:` ports are bound to 127.0.0.1 with fixed host ports, and each
+ *    `job.services.<id>.ports` reference becomes its literal value (see services.ts).
  * The job's other fields (steps, env, if, runs-on ...) are untouched.
  */
 export function splitJob(
@@ -75,7 +78,10 @@ export function splitJob(
   };
   const runsOn = resolveRunsOn(src["runs-on"]);
 
-  const target: Obj = { ...src, "runs-on": runsOn };
+  // Services bind loopback only and their `job.services.<id>.ports` become literals (#796).
+  const target: Obj = prepareServices({ ...src, "runs-on": runsOn }, (s) =>
+    s.includes("${{") ? interpolate(s, ctx) : s,
+  );
   delete target.strategy;
   delete target.concurrency;
   if (job.matrix) {

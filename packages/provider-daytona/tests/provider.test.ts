@@ -84,6 +84,26 @@ async function untilCancelled(): Promise<void> {
 
 const created = () => mock.requests.filter((r) => r.method === "POST" && r.path === "/api/sandbox");
 
+describe("egress none needs networkBlockAll in the reply", () => {
+  test("an account that does not apply it is refused and the sandbox is deleted", async () => {
+    await mock.stop();
+    mock = startMock({ ignoreBlockAll: true });
+    const err = (await make()
+      .create(spec({ network: { egress: "none" } }))
+      .catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(InfraError);
+    expect(err.message).toContain("did not apply networkBlockAll");
+    expect(mock.sandboxes.size).toBe(0);
+  });
+
+  test("open egress does not need it", async () => {
+    await mock.stop();
+    mock = startMock({ ignoreBlockAll: true });
+    await make().create(spec());
+    expect(mock.sandboxes.size).toBe(1);
+  });
+});
+
 describe("what is sent on create", () => {
   test("labelled, prefixed, no env, TTL backstops all within 30 minutes, no snapshot objects", async () => {
     const p = make();

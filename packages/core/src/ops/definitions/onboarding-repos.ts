@@ -376,8 +376,10 @@ export const previewWorkflows = defineOp({
     "supported trigger: push, pull_request, merge_group or workflow_dispatch, and the file is the " +
     "project's ingested workflow; schedule is not ingested yet). For each job a dry run of the " +
     "planner, with the project's variables plus TURNTABLE_CI=true: `skip` (its `if:` is false " +
-    "before it starts), `fail` (Turntable cannot run it: macOS, Windows, arm, docker or services, " +
-    "a reusable workflow ...) with the planner's reason and a `fix`, or `run`. Each job also lists " +
+    "before it starts), `fail` (Turntable cannot run it: macOS, Windows, arm, docker, or services " +
+    "without a Docker-capable size class, a reusable workflow ...) with the planner's reason and " +
+    "a `fix`, or `run` with its `mode` (`host`, or `container` for a job with services: or " +
+    "container: on the Docker-capable class). Each job also lists " +
     "every `secrets.*` and `vars.*` name it refers to (names only, with where it is used; " +
     "`secrets.GITHUB_TOKEN` is `provided`) and `will_run`, and `needs_summary` names the secrets " +
     "that jobs which will run need. No secret is read or resolved. Nothing runs and " +
@@ -434,7 +436,13 @@ export const previewWorkflows = defineOp({
         bytes += f.size;
         const yaml = await reader.fileAt(f.path, sha);
         const p =
-          yaml === undefined ? undefined : previewWorkflow(yaml, { defaultBranch: branch, vars });
+          yaml === undefined
+            ? undefined
+            : previewWorkflow(yaml, {
+                defaultBranch: branch,
+                vars,
+                ...(ctx.containerJobs ? { containerJobs: ctx.containerJobs } : {}),
+              });
         if (!p) {
           workflows.push({ ...empty, too_large: false });
           continue;
