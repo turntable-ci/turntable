@@ -144,6 +144,7 @@ import {
   prepareSupervisedLane,
 } from "./release/supervisor";
 import { staticPollKey } from "./ops/project-setup";
+import type { ImageRegistrar } from "./ops/define";
 import { startServer } from "./server";
 import { enableDevUi, hasUi } from "./ui-assets";
 import { transportOptionsFromEnv } from "./transport";
@@ -296,6 +297,8 @@ async function startBackground(
   containerJobs: ContainerJobs | undefined;
   /** Egress modes the worker's provider can enforce; undefined without a worker role. */
   providerEgress(): readonly string[] | undefined;
+  /** The worker's provider's image registration; undefined without one. */
+  imageRegistrar(): ImageRegistrar | undefined;
 }> {
   const log = (m: string) => console.log(`[turntable] ${m}`);
   // Loaded first: the worker uses the poll token to resolve actions for the repos it watches.
@@ -637,6 +640,12 @@ async function startBackground(
       : undefined,
     runDefaultBranch: poller ? (scope, repo) => poller!.runDefaultBranch(scope, repo) : undefined,
     providerEgress: () => workerProvider?.info.network.egressPolicy,
+    imageRegistrar: () => {
+      const p = workerProvider;
+      return p?.registerImage
+        ? { provider: p.info.name, register: (req) => p.registerImage!(req) }
+        : undefined;
+    },
     async stop() {
       poller?.stop();
       if (reconcileTimer) clearInterval(reconcileTimer);
@@ -1314,6 +1323,7 @@ async function serve(args: string[]): Promise<void> {
         ...(artifactStore ? { artifactBlobs: artifactStore } : {}),
         operatorOrgSlug: process.env.TURNTABLE_BOOTSTRAP_ORG?.trim() || "local",
         providerEgress: () => background.providerEgress(),
+        imageRegistrar: () => background.imageRegistrar(),
         ...(oidc ? { oidc } : {}),
         ...(outboundWebhooks ? { outboundWebhooks } : {}),
         ...(claims ? { claims } : {}),

@@ -18,7 +18,7 @@ import {
   touchInstanceToken,
 } from "../db/repos";
 import type { DoctorReport } from "../doctor/types";
-import type { ArtifactBlobs, Op, OpContext } from "./define";
+import type { ArtifactBlobs, ImageRegistrar, Op, OpContext } from "./define";
 import type { TrustAnchors } from "../approvals/attestation";
 import type { RelyingParty } from "../approvals/webauthn";
 import type { LaneConfigClient } from "../release/channel-client";
@@ -86,6 +86,8 @@ export type DispatchEnv = {
   transport?: Transport | undefined;
   /** Egress modes the sandbox provider can enforce; absent without a provider in this process. */
   providerEgress?: (() => readonly string[] | undefined) | undefined;
+  /** The provider's image registration, for `register_sandbox_image`; absent without one. */
+  imageRegistrar?: (() => ImageRegistrar | undefined) | undefined;
   /** The instance's per-org concurrency cap (`--org-cap`), the ceiling `set_quotas` clamps to. */
   instanceOrgCap?: number | undefined;
   staticPollProjects?: readonly string[] | undefined;
@@ -718,6 +720,7 @@ export async function dispatch(
       operatorOrgSlug: env.operatorOrgSlug,
       transport: env.transport,
       providerEgress: env.providerEgress,
+      imageRegistrar: env.imageRegistrar,
       instanceOrgCap: env.instanceOrgCap,
       staticPollProjects: env.staticPollProjects,
       backup: env.backup,

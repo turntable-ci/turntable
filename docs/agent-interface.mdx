@@ -195,6 +195,7 @@ Every operation in the registry, as it is wired today. REST is the route under `
 | `set_oidc_audiences` | `POST /api/v1/oidc-audiences` | no |  | write | admin | token | Limit the OIDC audiences a project's jobs may ask for, or lift the limit. |
 | `get_project_settings` | `GET /api/v1/project-settings` | yes |  | read | reader | token | A project's sandbox snapshot, concurrency cap and untrusted-run approval policy. |
 | `set_project_settings` | none | no |  | write | admin | instance | Set a project's sandbox snapshot and concurrency cap (instance administrator only). |
+| `register_sandbox_image` | none | no |  | write | admin | instance | Register a digest-pinned image as a provider snapshot (instance administrator only). |
 | `set_project_egress` | none | no |  | write | admin | instance | Set a project's default sandbox egress (instance administrator only). |
 | `tighten_project_egress` | `POST /api/v1/project-egress` | no |  | write | owner | token | Tighten a project's default sandbox egress (org owner; never widens). |
 | `get_project_pr_policy` | `GET /api/v1/project-pr-policy` | yes |  | read | reader | token | A project's pull request mode and trusted authors. |

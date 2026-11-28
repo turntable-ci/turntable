@@ -77,7 +77,7 @@ With `--worker`, `serve` also claims queued jobs and runs each in a sandbox from
 | `apiKeyFile` | none | Path of a file holding the API key. The key is read when first needed and never logged. |
 | `apiKeyEnv` | `DAYTONA_API_KEY` | An environment variable holding the key, used when `apiKeyFile` is not set. Set only one of the two. |
 | `baseUrl` | Daytona cloud | The API URL. |
-| `snapshot` | account default | An existing snapshot to start sandboxes from. Used even when the job names an image. Turntable never creates snapshots. |
+| `snapshot` | account default | An existing snapshot to start sandboxes from. Used even when the job names an image. A sandbox never creates a snapshot; the operator registers one with [`register_sandbox_image`](/default-image#register-it-with-the-provider). |
 | `target` | account default | The Daytona region. |
 | `fleet` | `longshore-dev` | Scopes the label, the name prefix and every count, list and delete to one fleet, so two instances on one account never touch each other's sandboxes. Lower case, starts with `turntable-`, at most 30 characters (for example `longshore-shadow`). |
 | `maxLive` | `2` | Live sandboxes of ours at once. At most `10`. |

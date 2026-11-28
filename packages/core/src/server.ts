@@ -5,7 +5,7 @@ import type { Db } from "./db";
 import type { BackupConfig } from "./db/backup";
 import type { SettingsRuntime } from "./settings/resolve";
 import { registry } from "./ops";
-import type { ArtifactBlobs } from "./ops/define";
+import type { ArtifactBlobs, ImageRegistrar } from "./ops/define";
 import { buildOpenApi } from "./ops/openapi";
 import { createMcpHttp } from "./mcp/http";
 import {
@@ -164,6 +164,8 @@ export type ServeOptions = {
   trustedProxies?: TrustedProxies;
   /** Egress modes the sandbox provider can enforce, for `set_project_egress`. */
   providerEgress?: (() => readonly string[] | undefined) | undefined;
+  /** The provider's image registration, for `register_sandbox_image`. */
+  imageRegistrar?: (() => ImageRegistrar | undefined) | undefined;
   /** The instance's per-org concurrency cap, the ceiling `set_quotas` clamps to. */
   instanceOrgCap?: number | undefined;
   /** `org-slug/project-slug` pairs the poll config names statically, for `list_projects`. */
@@ -221,6 +223,7 @@ export function startServer(options: ServeOptions) {
     artifactBlobs: options.artifactBlobs,
     operatorOrgSlug: options.operatorOrgSlug,
     providerEgress: options.providerEgress,
+    imageRegistrar: options.imageRegistrar,
     instanceOrgCap: options.instanceOrgCap,
     staticPollProjects: options.staticPollProjects,
     doctor: options.doctor,

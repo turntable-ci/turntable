@@ -1,0 +1,99 @@
+---
+title: Default image
+description: The turntable-ubuntu-24.04 sandbox image, what is in it, and how an operator registers it.
+---
+
+`turntable-ubuntu-24.04` is Turntable's default sandbox image. It carries what common CI on GitHub's `ubuntu-24.04` runner image expects, so a workflow that runs on `ubuntu-latest` there runs here without installing its toolchain or a database first. It is defined in this repo at `images/ubuntu-24.04/Dockerfile`, built in CI, and published to `ghcr.io/turntable-ci/turntable-ubuntu-24.04` by digest.
+
+It is not a copy of GitHub's image: it holds the tools most workflows use, not the full list. Anything missing installs with `sudo apt-get install` or a setup action, as on GitHub.
+
+## Contents
+
+Every download is pinned by version and checked against its sha256, every apt repository key by its sha256, and the base image by digest. Apt packages are installed at the major version shown from their signed repository. The build prints every version.
+
+| Tool | Version | Source |
+| --- | --- | --- |
+| Ubuntu | 24.04 (noble) | `ubuntu:24.04`, pinned by digest |
+| git, git-lfs | Ubuntu 24.04 | apt |
+| GitHub CLI (`gh`) | latest stable at build | cli.github.com apt repository (key pinned) |
+| jq, zstd, curl, wget, zip, unzip, xz, rsync, ripgrep, procps, openssh-client | Ubuntu 24.04 | apt |
+| build-essential, cmake, pkg-config | Ubuntu 24.04 | apt |
+| Development headers | libssl, libffi, zlib, libyaml, libreadline, libpq, libmysqlclient | apt |
+| Python | 3.13 (`python`, `python3`) | uv's managed Python |
+| uv | 0.11.16 | GitHub release, sha256 checked |
+| Node.js | 22.21.1 (LTS), with npm | nodejs.org, sha256 checked |
+| Bun | 1.4.4 | GitHub release, sha256 checked |
+| Ruby | 3.2 (`ruby-full`) | apt |
+| Go | 1.27.4 | go.dev, sha256 checked |
+| Java | Temurin 21 JDK | Adoptium apt repository (key pinned) |
+| PostgreSQL | 18, with pgvector, pg_trgm and citext | PGDG apt repository (key pinned) |
+| Redis | Ubuntu 24.04 (7.x) | apt |
+| MySQL | Ubuntu 24.04 (8.0) | apt |
+| sudo | passwordless for `runner` | apt |
+
+The image has a non-root user `runner` (uid 1001) with passwordless `sudo`, like GitHub's runner, and service data dirs it owns (`/var/lib/turntable-svc`). It is amd64 only.
+
+## Services without Docker
+
+A job's `services:` block needs Docker in the sandbox. The image instead ships `turntable-svc`, which starts a service on `127.0.0.1` at its usual port and waits until it answers:
+
+```yaml
+steps:
+  - run: turntable-svc start postgres
+    env:
+      POSTGRES_PASSWORD: postgres
+  - run: turntable-svc start redis
+  - run: psql -h 127.0.0.1 -U postgres -c 'CREATE EXTENSION IF NOT EXISTS vector'
+    env:
+      PGPASSWORD: postgres
+```
+
+| Service | Port | Settings (env of the `start` step) |
+| --- | --- | --- |
+| `postgres` | `PGPORT`, default 5432 | `POSTGRES_USER` (default `postgres`), `POSTGRES_PASSWORD` (unset: trust on localhost), `POSTGRES_DB` |
+| `redis` | `REDIS_PORT`, default 6379 | none |
+| `mysql` | `MYSQL_PORT`, default 3306 | `MYSQL_ROOT_PASSWORD` (unset: none), `MYSQL_DATABASE` |
+
+The defaults match the official `postgres`, `redis` and `mysql` service containers, so the connection strings a workflow already uses keep working. Each service runs as `runner`, even when the step runs as root. `turntable-svc stop <service>` stops one and `turntable-svc status` lists them.
+
+## Register it with the provider
+
+A provider that starts sandboxes from snapshots (Daytona) needs the image registered once. The instance operator calls `register_sandbox_image` over REST with an instance token:
+
+```sh
+curl -fsS -X POST "$TURNTABLE_URL/api/v1/instance/sandbox-images" \
+  -H "Authorization: Bearer $TURNTABLE_INSTANCE_TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"turntable-ubuntu-24.04","image":"ghcr.io/turntable-ci/turntable-ubuntu-24.04@sha256:<digest>","cpus":4,"memory_mb":8192,"disk_gb":20}'
+```
+
+The provider creates the snapshot with its own credentials and Turntable records the name and digest. The reply's `state` is `pending` while Daytona builds it and `ready` once it is usable. Registering the same name and digest again refreshes the record. A new image gets a new name: a snapshot name never changes what it holds.
+
+The image must be pinned by digest (`repository@sha256:<64 hex>`). A tag alone is refused, and a tag next to the digest is dropped. An image from `ghcr.io/turntable-ci/` is recorded as source `turntable`; any other ref is recorded as source `operator`.
+
+## Map `ubuntu-latest` to it
+
+GitHub's `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04` labels run on the size config's default class (see [Sandbox size per job](/providers#sandbox-size-per-job)). Point that class at the snapshot:
+
+```json
+{
+  "classes": {
+    "standard": {
+      "cpus": 4,
+      "memoryMb": 16384,
+      "providers": { "daytona": { "snapshot": "turntable-ubuntu-24.04" } }
+    }
+  },
+  "default": "standard",
+  "untrustedClass": "standard"
+}
+```
+
+## Per-project images
+
+A project can start from its own image instead. To change only versions, build `images/ubuntu-24.04` with build args (for example `--build-arg BUN_VERSION=<v> --build-arg BUN_SHA256=<sum>`; each download takes a version and its checksum). Otherwise, build it from its own Dockerfile, push it to a registry, and register it under its own name with `target_org` and `target_project` in the same call. That sets the project's `sandbox_snapshot`, which beats the size class's snapshot. `get_project_settings` shows the snapshot and, for a registered one, its image and digest under `sandbox_image`. `set_project_settings` can still name a snapshot made outside Turntable; its `sandbox_image` is then null.
+
+## Security
+
+- `register_sandbox_image` accepts only a ref pinned by digest, and it is meant for Turntable's registry or a ref the instance operator chooses. Only the instance administrator can call `register_sandbox_image` (not an MCP tool, not reachable with an org token of any role), and it is audited.
+- Every registered image is pinned by digest. The provider pulls it once, at registration. A sandbox starts from the snapshot by name, so no image is pulled by tag at run time.
+- A snapshot is used for every trust class of the project that starts from it, untrusted pull requests included. Never bake credentials or private code into an image.

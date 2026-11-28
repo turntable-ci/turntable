@@ -12,6 +12,7 @@ const ALLOWED_OUTSIDE_TRANSACTION = [
   "instance_rotate_webhook_secret", // PATCHes the new secret to GitHub (/app/hook/config), which must not hold the write lock; the seal commits first and a GitHub refusal restores the old secret and expiry, and the audit row follows in its own short transaction
   "log_store_migrate", // copies logs to the external store over HTTP for minutes; must not hold the write lock
   "onboard_repos", // asks GitHub for the installation's repos first; all writes are one inner transaction (all or nothing)
+  "register_sandbox_image", // asks the sandbox provider to build a snapshot (Daytona POST /snapshots, up to 60 s), which must not hold the write lock; the record, project pointer and project audit row are one db.transaction after the provider answers, and the dispatcher audits the call in its own short transaction
   "release_cosign_key_remove", // same: a lane channel round trip
   "release_cosign_key_set", // same: a lane channel round trip; the lane's own file changes, not this database
   "release_init_key", // same: a lane channel round trip; the key is generated and sealed in the lane's own directory, not in this database
