@@ -664,6 +664,10 @@ async function call(w: World, who: Who, op: Op, input: Record<string, unknown>):
 
 /** Ops no token can call, and ops with no input to aim. Each needs a reason. */
 const UNREACHABLE: Record<string, string> = {
+  set_project_var:
+    "the fixture project has no stored ingest settings to hold variables, so the call is refused for A as well; B is still probed and refused. Both orgs' sets, deletes and the cross-org refusal are in project-vars-ops.test.ts",
+  delete_project_var:
+    "the fixture project has no stored ingest settings to hold variables, so the call is refused for A as well; B is still probed and refused. Both orgs' sets, deletes and the cross-org refusal are in project-vars-ops.test.ts",
   get_artifact:
     "the fixture has no artifact store (artifacts are off), so the call is refused for A as well; B is still probed and finds no such artifact of its own. The bytes, the traversal refusals and the other-org not_found are in release-artifact-bytes.test.ts",
   get_artifact_file:

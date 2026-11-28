@@ -242,7 +242,9 @@ export const previewWorkflowsOutput = z.object({
                 where: z.array(z.string()).describe("Where the name is used, for example job env."),
                 provided: z
                   .boolean()
-                  .describe("True for secrets.GITHUB_TOKEN, which Turntable provides."),
+                  .describe(
+                    "True for secrets.GITHUB_TOKEN, which Turntable provides, and for a vars.* the project has set.",
+                  ),
               }),
             )
             .describe("Every secrets.* and vars.* name the job refers to."),

@@ -30,6 +30,8 @@ export const tagRefsSchema = z
  * calls repository variables). Values are stored in the clear and shown in `policy show`: never
  * put a secret here. Names follow GitHub's rule (no `GITHUB_` prefix).
  */
+export const MAX_VARS = 1000;
+
 export const varsSchema = z
   .record(
     z
@@ -41,7 +43,9 @@ export const varsSchema = z
       .refine((n) => n !== "__proto__", { message: "a variable name is reserved" }),
     z.string().max(1024),
   )
-  .refine((v) => Object.keys(v).length <= 50, { message: "at most 50 variables" });
+  .refine((v) => Object.keys(v).length <= MAX_VARS, {
+    message: `at most ${MAX_VARS} variables`,
+  });
 
 /**
  * Operator rules that run one job as several shards, each in its own sandbox, without changing

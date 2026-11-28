@@ -114,7 +114,7 @@ test("the settings are validated: reserved and malformed names, long values and 
     { "1BAD": "1" },
     { "a-b": "1" },
     { OK: "x".repeat(1025) },
-    Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`V${i}`, "1"])),
+    Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`V${i}`, "1"])),
   ])
     expect(
       ingestSettingsSchema.safeParse({ ...base, vars }).success,

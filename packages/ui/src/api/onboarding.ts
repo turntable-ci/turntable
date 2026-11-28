@@ -7,6 +7,8 @@ import { ApiError } from "./http-adapter";
 import { refusalMessage } from "./refusal";
 import type { WireError, WireRunDetail } from "./wire";
 
+/** One of a project's `vars.*`. Plain text, not a secret. `reserved` is set by Turntable. */
+export type ProjectVar = { name: string; value: string; reserved: boolean };
 export type MemberRole = "owner" | "admin" | "release_operator" | "member" | "viewer" | string;
 export type ChecksMode = "off" | "shadow" | "live";
 export type ClaimState = "pending" | "completed" | "expired" | "refused";
@@ -176,6 +178,17 @@ export interface OnboardingApi {
   /** Starts a passkey confirmation for `remove_project` with `delete_history`. */
   removeProjectChallenge(args: { org: string; project: string }): Promise<OnboardingStepUp>;
   previewWorkflows(args: { org: string; project: string }): Promise<WorkflowPreview>;
+  /** `list_project_vars`: the project's non-secret `vars.*` (plain text). */
+  listProjectVars(args: { org: string; project: string }): Promise<ProjectVar[]>;
+  /** `set_project_var`: create or replace one variable (an operator or above). */
+  setProjectVar(args: {
+    org: string;
+    project: string;
+    name: string;
+    value: string;
+  }): Promise<{ name: string; created: boolean }>;
+  /** `delete_project_var`: remove one variable. `TURNTABLE_CI` is reserved. */
+  deleteProjectVar(args: { org: string; project: string; name: string }): Promise<void>;
   runDefaultBranch(args: {
     org: string;
     project: string;
@@ -209,7 +222,7 @@ export function createOnboardingApi(options: OnboardingApiOptions = {}): Onboard
   const base = `${options.baseUrl ?? ""}/api/v1`;
 
   async function call<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     query: Record<string, string | number | undefined> = {},
     body?: unknown,
@@ -370,6 +383,32 @@ export function createOnboardingApi(options: OnboardingApiOptions = {}): Onboard
     },
     previewWorkflows({ org, project }) {
       return call<WorkflowPreview>("GET", "/workflow-preview", { org, project });
+    },
+    async listProjectVars({ org, project }) {
+      const out: ProjectVar[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const w = await call<{ vars: ProjectVar[]; next_cursor: string | null }>(
+          "GET",
+          "/project-vars",
+          { org, project, limit: 100, cursor },
+        );
+        out.push(...w.vars);
+        if (!w.next_cursor) break;
+        cursor = w.next_cursor;
+      }
+      return out;
+    },
+    setProjectVar({ org, project, name, value }) {
+      return call<{ name: string; created: boolean }>(
+        "POST",
+        "/project-vars",
+        {},
+        { org, project, name, value },
+      );
+    },
+    async deleteProjectVar({ org, project, name }) {
+      await call<{ deleted: boolean }>("DELETE", "/project-vars", {}, { org, project, name });
     },
     runDefaultBranch({ org, project, onboardingId }) {
       return call<DefaultBranchRun>(

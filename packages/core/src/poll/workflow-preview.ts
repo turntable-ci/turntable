@@ -57,7 +57,7 @@ export type PreviewRef = {
   name: string;
   /** Where it is used, for example "job env", "step with", "step if". */
   where: string[];
-  /** True for `secrets.GITHUB_TOKEN`, which Turntable provides: it is never needed. */
+  /** True for `secrets.GITHUB_TOKEN` and for a `vars.*` the project has set: nothing to add. */
   provided: boolean;
 };
 
@@ -182,13 +182,16 @@ export function previewWorkflow(
       return [id, typeof j?.name === "string" ? clip(j.name, 200) : null];
     }),
   );
+  const definedVars = new Set(Object.keys(o.vars).map((k) => k.toUpperCase()));
   const row = (
     id: string,
     rest: Partial<PreviewJob> & Pick<PreviewJob, "verdict">,
   ): PreviewJob => ({
     job_id: clip(id, 100),
     name: jobNames.get(id) ?? null,
-    refs: jobRefs((root.jobs as Record<string, unknown>)[id], root.env),
+    refs: jobRefs((root.jobs as Record<string, unknown>)[id], root.env).map((r) =>
+      r.kind === "var" && definedVars.has(r.name.toUpperCase()) ? { ...r, provided: true } : r,
+    ),
     ...rest,
   });
   if (!hasIngestedTrigger) {
