@@ -399,7 +399,7 @@ export async function executeJob(
         if (v.kind === "reachable") {
           return await settle(
             "infra_error",
-            `egress canary: the sandbox reached ${v.target} although egress is none; the job was not run`,
+            `egress canary: the sandbox reached ${v.target}${v.detail ? ` (${v.detail})` : ""} although egress is none; the job was not run`,
           );
         }
         if (v.kind === "unknown") {

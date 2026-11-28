@@ -40,6 +40,8 @@ export function startMock(
     listBroken?: boolean;
     /** Behave like an account that accepts an allow list but does not apply it. */
     ignoreNetworkLists?: boolean;
+    /** An account that does not apply networkBlockAll (reports it false). */
+    ignoreBlockAll?: boolean;
   } = {},
 ) {
   // The mock listens on loopback, which the outbound client refuses unless it is allowlisted.
@@ -199,7 +201,7 @@ export function startMock(
             labels: b.labels ?? {},
             createdAt: new Date().toISOString(),
             toolboxProxyUrl: `${origin}/toolbox`,
-            networkBlockAll: Boolean(b.networkBlockAll),
+            networkBlockAll: opts.ignoreBlockAll ? false : Boolean(b.networkBlockAll),
             // An account that does not apply a list (a lower tier) leaves these out of the reply.
             networkAllowList: opts.ignoreNetworkLists ? undefined : b.networkAllowList,
             domainAllowList: opts.ignoreNetworkLists ? undefined : b.domainAllowList,

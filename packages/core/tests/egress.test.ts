@@ -90,7 +90,7 @@ const tmp = mkdtempSync(join(tmpdir(), "ls-canary-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A provider whose exec runs the command on this machine; `path` sets what tools exist. */
-function localProvider(path: string): Provider {
+function localProvider(path: string, extraEnv: Record<string, string> = {}): Provider {
   const results = new Map<string, { exit: number; out: string }>();
   let n = 0;
   return {
@@ -99,7 +99,7 @@ function localProvider(path: string): Provider {
         const argv = [...o.argv];
         if (argv[0] === "sh") argv[0] = "/bin/sh";
         const p = Bun.spawn(argv, {
-          env: { PATH: path },
+          env: { PATH: path, ...extraEnv },
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -152,12 +152,36 @@ test.skipIf(!hasCurl)(
       ).toEqual({
         kind: "reachable",
         target: `127.0.0.1:${open.port}`,
+        detail: "curl http 200",
       });
     } finally {
       open.close();
     }
   },
 );
+
+test("the probe script ignores proxies and says how it reached a target", async () => {
+  const src = await Bun.file(new URL("../src/run/egress-canary.ts", import.meta.url)).text();
+  expect(src).toContain("curl --noproxy '*'");
+  expect(src).toContain("wget --no-proxy");
+  expect(src).toContain("unset HTTP_PROXY HTTPS_PROXY");
+});
+
+test.skipIf(!hasCurl)("a proxy in the environment is not used by the probe", async () => {
+  const open = await listening();
+  try {
+    const p = localProvider(REAL_PATH, {
+      HTTP_PROXY: "http://127.0.0.1:9",
+      http_proxy: "http://127.0.0.1:9",
+    });
+    expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] })).toMatchObject({
+      kind: "reachable",
+      detail: "curl http 200",
+    });
+  } finally {
+    open.close();
+  }
+});
 
 test("with no curl, wget, nc or bash the canary is unknown, not blocked", async () => {
   const empty = mkdtempSync(join(tmp, "bin-"));
@@ -166,7 +190,7 @@ test("with no curl, wget, nc or bash the canary is unknown, not blocked", async 
 });
 
 test("the default targets are a public IP and the metadata IP, by address so DNS cannot hide a hole", () => {
-  expect(CANARY_TARGETS).toEqual(["1.1.1.1:80", "169.254.169.254:80"]);
+  expect(CANARY_TARGETS).toEqual(["1.1.1.1:80", "169.254.169.254:80", "github.com:80"]);
 });
 
 // ---- the canary inside executeJob ----
