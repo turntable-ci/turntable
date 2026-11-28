@@ -158,6 +158,8 @@ export interface DaytonaProviderOptions {
   proxyTlsCaPem?: string;
   /** Poll interval while waiting for capacity or for a sandbox to start. Default 5 s. */
   pollMs?: number;
+  /** How long the create request (`POST /sandbox`) may take before it times out. Default 5 min (#814). */
+  createTimeoutMs?: number;
   /** How long a sandbox may take to reach `started`. Default 3 min. */
   startTimeoutMs?: number;
   /** Called after a sandbox is deleted, so callers can account for minutes used. */
@@ -168,6 +170,9 @@ export interface DaytonaProviderOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
+
+/** The create request's timeout. The old fixed 120 s was too close to Daytona's slow creates (#814). */
+const DEFAULT_CREATE_TIMEOUT_MS = 300_000;
 
 const dec = new TextDecoder();
 
@@ -230,6 +235,7 @@ export class DaytonaProvider implements Provider {
   private readonly capacityWaitMs: number;
   private readonly pollMs: number;
   private readonly startTimeoutMs: number;
+  private readonly createTimeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   /**
@@ -239,6 +245,12 @@ export class DaytonaProvider implements Provider {
    * id is accurate. An id leaves the set only when a get says it is gone (or not ours).
    */
   private readonly recorded = new Set<string>();
+  /**
+   * Ids this process got back from a create call. Such a sandbox may not carry our label yet (the
+   * label applies a moment after the create), so `destroy` may delete it by id anyway (#814). The
+   * label check guards every other id: one we were only told about, or one a caller invented.
+   */
+  private readonly created = new Set<string>();
   /** Serialises create() so the capacity check and the create cannot interleave in this process. */
   private createChain: Promise<unknown> = Promise.resolve();
 
@@ -280,6 +292,7 @@ export class DaytonaProvider implements Provider {
     this.capacityWaitMs = opts.capacityWaitMs ?? 20 * 60_000;
     this.pollMs = opts.pollMs ?? 5000;
     this.startTimeoutMs = opts.startTimeoutMs ?? 180_000;
+    this.createTimeoutMs = opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS;
     this.sleep = opts.sleep ?? ((ms) => Bun.sleep(ms));
     this.now = opts.now ?? Date.now;
 
@@ -985,7 +998,7 @@ export class DaytonaProvider implements Provider {
         try {
           sb = await this.api.json<DaytonaSandbox>("POST", "/sandbox", {
             json: body,
-            timeoutMs: 120_000,
+            timeoutMs: this.createTimeoutMs,
           });
           break;
         } catch (e) {
@@ -1004,6 +1017,7 @@ export class DaytonaProvider implements Provider {
       }
       // Recorded the moment it exists, before anything can fail, so it is counted and cleaned up.
       this.recorded.add(sb.id);
+      this.created.add(sb.id);
       try {
         if (!this.fleet.isOwn(sb))
           throw new InfraError("Daytona created a sandbox without our label; refusing to continue");
@@ -1045,7 +1059,10 @@ export class DaytonaProvider implements Provider {
           .catch((err) => err instanceof SandboxNotFoundError);
         this.known.delete(sb.id);
         // A delete that failed leaves it recorded: it still counts, and the next sweep retries it.
-        if (gone) this.recorded.delete(sb.id);
+        if (gone) {
+          this.recorded.delete(sb.id);
+          this.created.delete(sb.id);
+        }
         throw e;
       }
     };
@@ -1146,7 +1163,8 @@ export class DaytonaProvider implements Provider {
       }
       throw e;
     }
-    if (!this.fleet.isOwn(sb)) {
+    // A sandbox we created is deleted by the id we hold, even before its labels apply (#814).
+    if (!this.created.has(id) && !this.fleet.isOwn(sb)) {
       this.recorded.delete(id);
       throw new SpecError(
         `refusing to delete sandbox ${id}: it is not labelled ${this.fleet.label}=${OWN_LABEL_VALUE}`,
@@ -1160,6 +1178,7 @@ export class DaytonaProvider implements Provider {
     this.known.delete(id);
     await this.waitGone(id);
     this.recorded.delete(id);
+    this.created.delete(id);
     const destroyedAt = this.now();
     const createdAt = sb.createdAt ? Date.parse(sb.createdAt) : destroyedAt;
     this.opts.onUsage?.({

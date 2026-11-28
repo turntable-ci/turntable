@@ -83,6 +83,7 @@ With `--worker`, `serve` also claims queued jobs and runs each in a sandbox from
 | `maxLive` | `2` | Live sandboxes of ours at once. At most `10`. |
 | `ttlSeconds` | `1800` | Longest sandbox lifetime. At most `1800`; longer requests are clamped. |
 | `capacityWaitSeconds` | `1200` | How long a job waits for capacity before it fails as an infrastructure error. |
+| `createTimeoutSeconds` | `300` | How long the create request may take (10 to 1800). A create that times out is requeued with backoff for up to 10 minutes without spending the job's infra retry. |
 | `quotaMode` | `"org-usage"` | `"org-usage"` reads the org's CPU in use (see `ownerCiPreflight`); if Daytona answers that read with 403 (a key scoped to sandbox write and delete) it falls back to `"own-fleet"` and logs it once. `"own-fleet"` never reads the org: it counts our own live sandboxes by our label and waits while that is `maxLive` or more. Only a 403 falls back. |
 | `ownerCiPreflight` | `true` | The org-wide CPU check before each create. `false` turns it off, or give `{ cpuLimit, diskLimitGiB, memLimitGiB, region, sandboxClass }`. Disk and memory are judged against the quotas the usage reply reports unless you set a limit; with neither they are not checked. |
 | `allowDomainListConfinement` | `false` | For the secrets-proxy path: accept a domain-list confinement, which rests on Daytona's filter reading the TLS server name. See [Secrets proxy](/secrets-proxy). |

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type InfraKind, isRetryableInfra, retryableAfterSteps } from "@turntable/act-runner";
 import { type Db, onAttemptsCancelled } from "../db";
+import { isCreateTimeout, isSandboxLostMessage } from "./create-stats";
 import {
   addCut,
   appendLogFenced,
@@ -8,6 +9,8 @@ import {
   claimNextAttempt,
   earlierInfraReason,
   listAttempts,
+  CREATE_TIMEOUT_MAX_WAIT_MS,
+  CREATE_TIMEOUT_REQUEUE,
   NETWORK_REQUEUE,
   requeuePreSandbox,
   CONTROLLER_LOST,
@@ -85,6 +88,8 @@ export type SchedulerOptions = {
   network?: NetworkHealth;
   /** Wait before an infra retry (#517) starts its new attempt. Default 10 s. */
   infraRetryBackoffMs?: number;
+  /** Total wait a job gets for sandbox create timeouts before it ends `infra_error` (#814). Default 10 min. */
+  createTimeoutMaxWaitMs?: number;
   now?: () => number;
   log?: (message: string) => void;
 };
@@ -101,6 +106,9 @@ export const LEASE_GUARD_MARGIN_MS = 2_000;
 
 /** The fixed wait before an infra retry (#517). */
 export const INFRA_RETRY_BACKOFF_MS = 10_000;
+
+/** The longest single backoff before a create-timeout requeue (#814). */
+const MAX_CREATE_BACKOFF_MS = 60_000;
 
 /** What the scheduler records when a runner throws or returns nonsense. */
 const infra = (reason: string, infraKind?: InfraKind, cause?: unknown): AttemptOutcome => {
@@ -201,6 +209,7 @@ export class Scheduler {
       drain: o.drain ?? processDrain,
       network: o.network ?? processNetwork,
       infraRetryBackoffMs: o.infraRetryBackoffMs ?? INFRA_RETRY_BACKOFF_MS,
+      createTimeoutMaxWaitMs: o.createTimeoutMaxWaitMs ?? CREATE_TIMEOUT_MAX_WAIT_MS,
       now: o.now ?? Date.now,
       log: o.log ?? (() => {}),
     };
@@ -500,6 +509,43 @@ export class Scheduler {
     });
   }
 
+  /**
+   * After a sandbox create that timed out or lost its sandbox before it was usable (#814): waits a
+   * growing backoff (the lease is held, a cancel still lands), then requeues without spending the
+   * job's infra retry, until the job's total wait passes `createTimeoutMaxWaitMs`.
+   */
+  async #requeueForCreateTimeout(
+    claim: Claim,
+    reason: string,
+    signal: AbortSignal,
+  ): Promise<"requeued" | "exhausted" | "no"> {
+    const earlier = (await listAttempts(this.#o.db, claim.scope, claim.job.id)).filter((a) =>
+      a.errorClass?.startsWith(CREATE_TIMEOUT_REQUEUE),
+    ).length;
+    const waitMs = Math.min(this.#o.infraRetryBackoffMs * 2 ** earlier, MAX_CREATE_BACKOFF_MS);
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, waitMs);
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    if (signal.aborted) return "no";
+    const ok = await requeuePreSandbox(this.#o.db, claim.scope, {
+      attemptId: claim.attempt.id,
+      owner: this.owner,
+      reason,
+      now: this.#o.now(),
+      cause: "create_timeout",
+      maxWaitMs: this.#o.createTimeoutMaxWaitMs,
+    });
+    return ok ? "requeued" : earlier > 0 ? "exhausted" : "no";
+  }
+
   /** One job-log line for each degraded window a requeued job waited through (#698). */
   async #networkNotices(claim: Claim): Promise<string[]> {
     if (claim.attempt.attempt <= 1) return [];
@@ -661,6 +707,37 @@ export class Scheduler {
           clearInterval(beat);
           this.nudge();
           return;
+        }
+      }
+      // A sandbox create that timed out or lost its sandbox (#814): requeued with backoff, up to a
+      // bounded total wait, without spending the infra retry. Once the wait is spent the job ends
+      // `infra_error` with a reason that says so.
+      if (
+        outcome.state === "infra_error" &&
+        outcome.infraKind === "sandbox_create_failed" &&
+        (isCreateTimeout(outcome.reason) || isSandboxLostMessage(outcome.reason)) &&
+        !controller.signal.aborted &&
+        !this.#cutting.has(attempt.id)
+      ) {
+        const r = await this.#requeueForCreateTimeout(
+          claim,
+          outcome.reason,
+          controller.signal,
+        ).catch((err) => {
+          this.#o.log(`could not requeue ${attempt.id} for a create timeout: ${String(err)}`);
+          return "no" as const;
+        });
+        if (r === "requeued") {
+          clearInterval(beat);
+          this.nudge();
+          return;
+        }
+        if (r === "exhausted") {
+          outcome = {
+            ...outcome,
+            infraKind: "other",
+            reason: `the sandbox could not be created after repeated timeouts (waited out ${Math.round(this.#o.createTimeoutMaxWaitMs / 60_000)} min): ${outcome.reason}`,
+          };
         }
       }
       // A transient infra failure waits out the backoff while the lease is still held (the

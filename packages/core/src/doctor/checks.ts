@@ -1,4 +1,5 @@
 import { createPrivateKey, X509Certificate } from "node:crypto";
+import { type CreateStats, processCreateStats } from "../scheduler/create-stats";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { ingestStatus, POLL_RESERVE } from "../poll/status";
@@ -935,6 +936,37 @@ export function checkEgress(net: NetworkHealth = processNetwork): DoctorCheck {
   return pass("egress", "network", `outbound network is healthy${recent}`);
 }
 
+/**
+ * The recent sandbox create-timeout rate per provider (#814), from this process's last hour. A
+ * rate of a quarter or more over at least four creates is a warning. Fixed words and counts only.
+ */
+export function checkCreateTimeouts(stats: CreateStats = processCreateStats): DoctorCheck {
+  const rows = stats.snapshot();
+  if (rows.length === 0) {
+    return pass(
+      "create_timeouts",
+      "provider",
+      "no sandbox create in this process in the last hour",
+    );
+  }
+  const text = rows
+    .map(
+      (r) =>
+        `${r.provider} ${r.timeouts}/${r.creates} (${Math.round((100 * r.timeouts) / r.creates)}%)`,
+    )
+    .join(", ");
+  const bad = rows.some((r) => r.creates >= 4 && r.timeouts / r.creates >= 0.25);
+  if (bad) {
+    return warn(
+      "create_timeouts",
+      "provider",
+      `sandbox create timeouts in the last hour: ${text}`,
+      "The provider is slow to create sandboxes. Timed-out jobs are requeued, not failed. Raise createTimeoutSeconds in the provider config if creates are only slow.",
+    );
+  }
+  return pass("create_timeouts", "provider", `sandbox create timeouts in the last hour: ${text}`);
+}
+
 /** A drain holds back every new attempt: say so, with a fixed sentence (#446). */
 export function checkDraining(): DoctorCheck {
   const area = "scheduler";
@@ -1024,6 +1056,7 @@ export async function runDoctor(i: DoctorInputs): Promise<DoctorReport> {
     ...(await safe("poll_health", "ingest", () => checkPollHealth())),
     ...(await safe("draining", "scheduler", () => checkDraining())),
     ...(await safe("egress", "network", () => checkEgress())),
+    ...(await safe("create_timeouts", "provider", () => checkCreateTimeouts())),
     ...(await safe("human_approval_approvers", "approvals", () => checkHumanApprovalApprovers(i))),
     ...(await safe("approver_github_ids", "approvals", () => checkApproverReenrol(i))),
     ...(await safe("human_approval_key_policy", "approvals", () => checkHumanApprovalKeyPolicy(i))),

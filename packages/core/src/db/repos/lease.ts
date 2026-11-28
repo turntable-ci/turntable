@@ -1269,6 +1269,12 @@ export async function requeueInfraFailureOnce(
 export const NETWORK_REQUEUE = "network_degraded";
 /** Most requeues one job gets for a degraded network, so a flapping probe cannot loop forever. */
 export const MAX_NETWORK_REQUEUES = 10;
+/** The error class an attempt ends with when its sandbox create timed out and it was requeued (#814). */
+export const CREATE_TIMEOUT_REQUEUE = "sandbox_create_timeout";
+/** Longest a job keeps being requeued for create timeouts, from its first one (#814). */
+export const CREATE_TIMEOUT_MAX_WAIT_MS = 10 * 60_000;
+/** Why a requeue happens: a degraded network (#698) or a sandbox create that timed out (#814). */
+export type RequeueCause = "network" | "create_timeout";
 
 /**
  * Requeues an attempt that failed BEFORE its sandbox existed because the network is degraded
@@ -1291,8 +1297,13 @@ export async function requeuePreSandbox(
     reason: string;
     now: number;
     requireExpired?: boolean;
+    /** Default `network`. `create_timeout` is bounded by `maxWaitMs` from the chain's first attempt. */
+    cause?: RequeueCause;
+    maxWaitMs?: number;
   },
 ): Promise<boolean> {
+  const cause = input.cause ?? "network";
+  const klass = cause === "network" ? NETWORK_REQUEUE : CREATE_TIMEOUT_REQUEUE;
   // With an external log store the log size is an HTTP call, read before the transaction opens;
   // when the store is down the marker line is skipped and the requeue still happens.
   const external = externalLogStore() !== undefined;
@@ -1327,11 +1338,20 @@ export async function requeuePreSandbox(
       .limit(1);
     if (started) return false;
     const all = await listAttempts(tx, scope, cur.jobId);
-    const spent = all.filter((a) => a.errorClass?.startsWith(NETWORK_REQUEUE)).length;
-    if (spent >= MAX_NETWORK_REQUEUES) return false;
+    const mine = all.filter((a) => a.errorClass?.startsWith(klass));
+    if (cause === "network") {
+      if (mine.length >= MAX_NETWORK_REQUEUES) return false;
+    } else {
+      // Bounded total wait: from the first create timeout's start (this attempt's, when none).
+      const first = Math.min(
+        cur.startedAt ?? input.now,
+        ...mine.map((a) => a.startedAt ?? input.now),
+      );
+      if (input.now - first >= (input.maxWaitMs ?? CREATE_TIMEOUT_MAX_WAIT_MS)) return false;
+    }
     await updateAttempt(tx, scope, cur.id, {
       state: "infra_error",
-      errorClass: `${NETWORK_REQUEUE}: ${sanitizeInfraError(input.reason).slice(0, 160)}`,
+      errorClass: `${klass}: ${sanitizeInfraError(input.reason).slice(0, 160)}`,
     });
     await tx.orm
       .update(s.jobAttempts)
@@ -1345,12 +1365,14 @@ export async function requeuePreSandbox(
         cur.id,
         tail,
         new TextEncoder().encode(
-          "network degraded: this attempt failed before a sandbox existed; it is re-queued and does not use the retry\n",
+          cause === "network"
+            ? "network degraded: this attempt failed before a sandbox existed; it is re-queued and does not use the retry\n"
+            : "sandbox create timed out: this attempt failed before a sandbox was usable; it is re-queued and does not use the retry\n",
         ),
       );
     }
-    await transitionJob(tx, scope, cur.jobId, "infra_error", { reason: NETWORK_REQUEUE });
-    const job = await transitionJob(tx, scope, cur.jobId, "queued", { reason: NETWORK_REQUEUE });
+    await transitionJob(tx, scope, cur.jobId, "infra_error", { reason: klass });
+    const job = await transitionJob(tx, scope, cur.jobId, "queued", { reason: klass });
     const next = await createAttempt(tx, scope, {
       jobId: cur.jobId,
       provider: cur.provider,
@@ -1369,7 +1391,7 @@ export async function requeuePreSandbox(
     await appendAudit(tx, scope, {
       principalKind: "system",
       principalId: "scheduler",
-      op: "attempt.network_requeue",
+      op: cause === "network" ? "attempt.network_requeue" : "attempt.create_timeout_requeue",
       effect: "write",
       outcome: "ok",
       input: { attempt_id: cur.id, job_id: cur.jobId, at: input.now },
