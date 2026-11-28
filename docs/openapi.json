@@ -18625,6 +18625,179 @@
         "x-turntable-untrusted-output": false
       }
     },
+    "/instance/project-vars": {
+      "post": {
+        "operationId": "set_project_var_instance",
+        "summary": "Create or replace one workflow variable of any project (instance administrator only).",
+        "description": "The instance administrator's form of `set_project_var`: names the org and project by slug. Same name, reserved-name and size rules. Audited in the system org's chain and in the target org's own, with the name only, never the value. Not an MCP tool.\n\nInstance administrator only: a `tti_` token minted on the host with `turntable token create --instance`. No org token of any role can call it. Not an MCP tool. Side effects: write; audited.",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target_org": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Slug of the org."
+                  },
+                  "target_project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Slug of the project."
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "A variable name: letters, digits and underscores, not starting with GITHUB_."
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["target_org", "target_project", "name", "value"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Turntable-Version": {
+                "$ref": "#/components/headers/TurntableVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["name", "created"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidInput"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-turntable-effect": "write",
+        "x-turntable-instance-only": true,
+        "x-turntable-untrusted-output": false
+      },
+      "delete": {
+        "operationId": "delete_project_var_instance",
+        "summary": "Delete one workflow variable of any project (instance administrator only).",
+        "description": "The instance administrator's form of `delete_project_var`: names the org and project by slug. `TURNTABLE_CI` is reserved. Audited in the system org's chain and in the target org's own, with the name only. Not an MCP tool.\n\nInstance administrator only: a `tti_` token minted on the host with `turntable token create --instance`. No org token of any role can call it. Not an MCP tool. Side effects: destructive; audited.",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target_org": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Slug of the org."
+                  },
+                  "target_project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "Slug of the project."
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "A variable name: letters, digits and underscores, not starting with GITHUB_."
+                  }
+                },
+                "required": ["target_org", "target_project", "name"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Turntable-Version": {
+                "$ref": "#/components/headers/TurntableVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["deleted"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidInput"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-turntable-effect": "destructive",
+        "x-turntable-instance-only": true,
+        "x-turntable-untrusted-output": false
+      }
+    },
     "/instance/project-settings": {
       "post": {
         "operationId": "set_project_settings",

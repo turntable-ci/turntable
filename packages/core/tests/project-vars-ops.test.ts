@@ -1,6 +1,8 @@
 // list_project_vars, set_project_var and delete_project_var (#798): roles, tenant isolation,
 // the reserved TURNTABLE_CI, audit by name only, and preview_workflows reflecting a change.
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { systemOrgId } from "../src/audit/failures";
+import { createInstanceTokenFromCli } from "../src/ops/instance-token-cli";
 import { bindRepo, getProjectIngest, listAudit, setProjectIngest, type Db } from "../src/db";
 import { upsertInstallation } from "../src/db/repos";
 import { dispatch, registry, type DispatchEnv } from "../src/ops";
@@ -36,7 +38,13 @@ const repoReader: RepoReader = {
 
 beforeEach(async () => {
   ({ db, a, b } = await seedWorld());
-  env = { registry, db, now: () => 1_800_000_000_000, repoReader: async () => repoReader };
+  env = {
+    registry,
+    db,
+    allowInstance: true,
+    now: () => 1_800_000_000_000,
+    repoReader: async () => repoReader,
+  };
   reader = (await mintToken(db, a.scope, "reader")).secret;
   operator = (await mintToken(db, a.scope, "release_operator")).secret;
   bOperator = (await mintToken(db, b.scope, "release_operator")).secret;
@@ -71,8 +79,15 @@ beforeEach(async () => {
   });
 });
 
+const withoutClock = ({ now: _now, ...rest }: DispatchEnv): DispatchEnv => rest;
+// An instance token is minted on the real clock, so it is checked on it too.
 const call = (token: string, op: string, input: Record<string, unknown> = {}) =>
-  dispatch(env, { kind: "bearer", token }, op, input);
+  dispatch(
+    token.startsWith("tti_") ? withoutClock(env) : env,
+    { kind: "bearer", token },
+    op,
+    input,
+  );
 type Var = { name: string; value: string; reserved: boolean };
 const list = async (token: string, t: Tenant = a): Promise<Var[]> => {
   const r = await call(token, "list_project_vars", {});
@@ -178,4 +193,88 @@ test("preview_workflows marks the var provided once it is set", async () => {
   expect(await provided()).toBe(true);
   await call(operator, "delete_project_var", { name: "VITE_PUBLIC_KEY" });
   expect(await provided()).toBe(false);
+});
+
+describe("the instance administrator's set and delete", () => {
+  let instance: string;
+  beforeEach(async () => {
+    instance = (await createInstanceTokenFromCli(db, { name: "ops" })).secret;
+  });
+  const target = { target_org: "org-a", target_project: "app" };
+
+  test("sets and deletes in a named project, audited in both chains by name only", async () => {
+    const value = `v-${crypto.randomUUID()}`;
+    const set = await call(instance, "set_project_var_instance", {
+      ...target,
+      name: "VITE_I",
+      value,
+    });
+    expect(set.ok && (set.output as { created: boolean }).created).toBe(true);
+    expect(Object.keys((await storedVars(a))!).toSorted()).toEqual(["TURNTABLE_CI", "VITE_I"]);
+    expect(Object.keys((await storedVars(b))!)).toEqual(["TURNTABLE_CI"]);
+    expect(
+      (await call(instance, "delete_project_var_instance", { ...target, name: "VITE_I" })).ok,
+    ).toBe(true);
+    expect(Object.keys((await storedVars(a))!)).toEqual(["TURNTABLE_CI"]);
+    const own = (await listAudit(db, a.scope)).filter((r) =>
+      r.op.endsWith("_project_var_instance"),
+    );
+    expect(own.map((r) => r.op).toSorted()).toEqual([
+      "delete_project_var_instance",
+      "set_project_var_instance",
+    ]);
+    for (const r of own) {
+      expect(r.principalKind).toBe("instance");
+      expect(r.input).toContain("VITE_I");
+      expect(r.input).not.toContain(value);
+    }
+    const sys = await listAudit(db, { orgId: await systemOrgId(db) }, { limit: 50 });
+    const sysRows = sys.filter((r) => r.op.endsWith("_project_var_instance"));
+    expect(sysRows).toHaveLength(2);
+    for (const r of sysRows) expect(r.input).not.toContain(value);
+  });
+
+  test("keeps the reserved name, unknown targets and the system org refused", async () => {
+    for (const name of ["TURNTABLE_CI", "turntable_ci"]) {
+      expect(
+        (await call(instance, "set_project_var_instance", { ...target, name, value: "x" })).ok,
+      ).toBe(false);
+      expect((await call(instance, "delete_project_var_instance", { ...target, name })).ok).toBe(
+        false,
+      );
+    }
+    for (const t of [
+      { target_org: "nope", target_project: "app" },
+      { target_org: "org-a", target_project: "nope" },
+      { target_org: "system", target_project: "app" },
+    ]) {
+      const r = await call(instance, "set_project_var_instance", {
+        ...t,
+        name: "VITE_I",
+        value: "1",
+      });
+      expect(!r.ok && r.error.code).toBe("not_found");
+    }
+    expect((await storedVars(a))?.TURNTABLE_CI).toBe("true");
+  });
+
+  test("no org token of any role reaches them", async () => {
+    for (const token of [reader, operator, bOperator]) {
+      const r = await call(token, "set_project_var_instance", {
+        ...target,
+        name: "VITE_I",
+        value: "1",
+      });
+      expect(r.ok).toBe(false);
+      expect(
+        (await call(token, "delete_project_var_instance", { ...target, name: "VITE_I" })).ok,
+      ).toBe(false);
+    }
+    expect(Object.keys((await storedVars(a))!)).toEqual(["TURNTABLE_CI"]);
+  });
+
+  test("they are REST only", () => {
+    for (const n of ["set_project_var_instance", "delete_project_var_instance"])
+      expect(registry.ops.find((o) => o.name === n)?.mcp).toBe(false);
+  });
 });
