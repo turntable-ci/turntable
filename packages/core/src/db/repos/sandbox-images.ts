@@ -25,7 +25,7 @@ export type SandboxImage = {
 };
 
 /** Turntable's own images. Anything else is an operator-registered ref. */
-export const TURNTABLE_REGISTRY = "ghcr.io/turntable-ci/";
+export const OWN_REGISTRY = "ghcr.io/turntable-ci/";
 
 function decode(value: unknown): Record<string, SandboxImage> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};

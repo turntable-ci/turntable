@@ -14,7 +14,7 @@ import {
 import {
   getSandboxImage,
   putSandboxImage,
-  TURNTABLE_REGISTRY,
+  OWN_REGISTRY,
   type SandboxImage,
 } from "../../db/repos/sandbox-images";
 import { SYSTEM_ORG_SLUG } from "../../audit/failures";
@@ -158,7 +158,7 @@ export const registerSandboxImage = defineOp({
       name: i.name,
       image,
       digest: pinned.digest,
-      source: pinned.repository.startsWith(TURNTABLE_REGISTRY) ? "turntable" : "operator",
+      source: pinned.repository.startsWith(OWN_REGISTRY) ? "turntable" : "operator",
       provider: registrar.provider,
       state: made.state,
       registeredBy: ctx.principal.id,
