@@ -116,6 +116,11 @@ describe("service options cannot publish ports (#796)", () => {
     "--publish=5432",
     "-P",
     "-p5432:5432",
+    "-tp 0.0.0.0:5432:5432",
+    "-iP",
+    "'-p' 0.0.0.0:5432:5432",
+    '"--publish" 5432:5432',
+    "--pub\\lish 5432:5432",
   ]) {
     test(`refuses ${options}`, () => {
       expect(() =>
@@ -123,6 +128,24 @@ describe("service options cannot publish ports (#796)", () => {
       ).toThrow(/publish a port/);
     });
   }
+  for (const options of [
+    '--health-cmd "pg_isready -h localhost -p 5432"',
+    '--health-cmd "redis-cli -p 6379 ping"',
+    '--health-cmd="mysqladmin ping -h 127.0.0.1 -P 3306"',
+    "--health-cmd 'pg_isready -p 5432' --health-retries 5",
+  ]) {
+    test(`allows ${options}`, () => {
+      const r = bindServicePorts({ db: { image: "p", ports: ["5432"], options } });
+      expect(r.ports.db).toEqual({ "5432": "5432" });
+    });
+  }
+  test("tcp and udp on the same host port do not collide", () => {
+    const r = bindServicePorts({ dns: { image: "d", ports: ["53:53/tcp", "53:53/udp"] } });
+    expect(r.services.dns).toEqual({
+      image: "d",
+      ports: ["127.0.0.1:53:53", "127.0.0.1:53:53/udp"],
+    });
+  });
   test("keeps a health command and other options", () => {
     const r = bindServicePorts({
       db: { image: "p", ports: ["5432"], options: "--health-cmd pg_isready --pids-limit 100" },

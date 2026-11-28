@@ -16,10 +16,73 @@ export type ServicePorts = Record<string, Record<string, string>>;
 
 // [ip:][host:]container[/proto]. Ranges and IPv6 addresses are refused.
 const PORT_SPEC = /^(?:(\d{1,3}(?:\.\d{1,3}){3}):)?(?:(\d{1,5}):)?(\d{1,5})(?:\/(tcp|udp|sctp))?$/i;
-// A docker publish flag in a service's options: -p, -P, --publish, --publish-all.
-const PUBLISH_FLAG = /(?:^|\s)(?:-[pP](?=$|[\s=\d[:])|--publish(?:-all)?(?=$|[\s=]))/;
 /** Where a port without a host port goes when its container port is already taken. */
 const FIRST_FREE = 49152;
+
+// Long flags act's pflag parser takes without a value; any other long flag consumes the next token.
+const BOOL_LONG = new Set([
+  "init",
+  "privileged",
+  "read-only",
+  "tty",
+  "interactive",
+  "no-healthcheck",
+]);
+// Short bool shorthands that can sit before p/P in a cluster such as `-tp` or `-iP`.
+const BOOL_SHORT = new Set(["i", "t", "d"]);
+
+/** Splits like shellquote: whitespace separates, quotes group, a backslash escapes. */
+function shellSplit(input: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let has = false;
+  let quote: string | null = null;
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i] as string;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      else cur += c;
+    } else if (c === "\\" && i + 1 < input.length) {
+      cur += input[++i];
+      has = true;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+      else cur += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      has = true;
+    } else if (/\s/.test(c)) {
+      if (has || cur) out.push(cur);
+      cur = "";
+      has = false;
+    } else cur += c;
+  }
+  if (has || cur) out.push(cur);
+  return out;
+}
+
+/** True when a service's options carry a docker publish flag (-p, -P, --publish, --publish-all). */
+export function publishesPort(options: string): boolean {
+  const tokens = shellSplit(options);
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i] as string;
+    if (t === "--") break;
+    if (t.startsWith("--")) {
+      const name = t.slice(2).split("=")[0] as string;
+      if (name === "publish" || name === "publish-all") return true;
+      if (!t.includes("=") && !BOOL_LONG.has(name)) i++; // the value is the next token
+    } else if (t.startsWith("-") && t.length > 1) {
+      for (const ch of t.slice(1)) {
+        if (ch === "p" || ch === "P") return true;
+        if (!BOOL_SHORT.has(ch)) {
+          if (t.slice(1).length === 1) i++; // a lone value flag such as -e or -v takes the next token
+          break;
+        }
+      }
+    }
+  }
+  return false;
+}
 
 const validPort = (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= 65535;
 
@@ -33,14 +96,14 @@ export function bindServicePorts(
   services: Obj,
   resolve: (s: string) => string = (s) => s,
 ): { services: Obj; ports: ServicePorts } {
-  const used = new Set<number>();
+  const used = new Set<string>();
   const ports: ServicePorts = {};
   const out: Obj = {};
   type Parsed = { id: string; container: number; host?: number; proto?: string };
   const parsed: Parsed[] = [];
   for (const [id, spec] of Object.entries(services)) {
     // act merges -p/--publish/-P from options into the port bindings, past the loopback rewrite.
-    if (isObj(spec) && typeof spec.options === "string" && PUBLISH_FLAG.test(spec.options)) {
+    if (isObj(spec) && typeof spec.options === "string" && publishesPort(spec.options)) {
       throw new PlanError(
         "services",
         `service "${id}" options publish a port (-p, --publish or -P): use ports: instead`,
@@ -62,10 +125,11 @@ export function bindServicePorts(
         );
       }
       if (host !== undefined) {
-        if (used.has(host)) {
+        const key = `${m[4]?.toLowerCase() ?? "tcp"}:${host}`;
+        if (used.has(key)) {
           throw new PlanError("services", `service "${id}" host port ${host} is used twice`);
         }
-        used.add(host);
+        used.add(key);
       }
       parsed.push({
         id,
@@ -79,13 +143,14 @@ export function bindServicePorts(
   let next = FIRST_FREE;
   for (const p of parsed) {
     if (p.host !== undefined) continue;
-    if (!used.has(p.container)) p.host = p.container;
+    const proto = p.proto ?? "tcp";
+    if (!used.has(`${proto}:${p.container}`)) p.host = p.container;
     else {
-      while (used.has(next)) next++;
+      while (used.has(`${proto}:${next}`)) next++;
       if (next > 65535) throw new PlanError("services", "no free host port for a service");
       p.host = next;
     }
-    used.add(p.host);
+    used.add(`${p.proto ?? "tcp"}:${p.host}`);
   }
   for (const [id, spec] of Object.entries(services)) {
     if (!isObj(spec) || spec.ports === undefined) {
