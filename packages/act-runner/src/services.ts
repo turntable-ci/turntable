@@ -27,6 +27,8 @@ const BOOL_LONG = new Set([
   "tty",
   "interactive",
   "no-healthcheck",
+  "rm",
+  "oom-kill-disable",
 ]);
 // Short bool shorthands that can sit before p/P in a cluster such as `-tp` or `-iP`.
 const BOOL_SHORT = new Set(["i", "t", "d"]);
@@ -43,15 +45,18 @@ function shellSplit(input: string): string[] {
       if (c === "'") quote = null;
       else cur += c;
     } else if (c === "\\" && i + 1 < input.length) {
-      cur += input[++i];
-      has = true;
+      const next = input[++i] as string;
+      if (next !== "\n") {
+        cur += next;
+        has = true;
+      } // a backslash-newline is dropped, as shellquote does
     } else if (quote === '"') {
       if (c === '"') quote = null;
       else cur += c;
     } else if (c === "'" || c === '"') {
       quote = c;
       has = true;
-    } else if (/\s/.test(c)) {
+    } else if (c === " " || c === "\n" || c === "\t") {
       if (has || cur) out.push(cur);
       cur = "";
       has = false;

@@ -121,6 +121,10 @@ describe("service options cannot publish ports (#796)", () => {
     "'-p' 0.0.0.0:5432:5432",
     '"--publish" 5432:5432',
     "--pub\\lish 5432:5432",
+    "--rm -p 0.0.0.0:5432:5432",
+    "--oom-kill-disable -p 0.0.0.0:5432:5432",
+    "-\\\np 0.0.0.0:5432:5432",
+    "--label=a\u00a0--env -p 0.0.0.0:5432:5432",
   ]) {
     test(`refuses ${options}`, () => {
       expect(() =>
