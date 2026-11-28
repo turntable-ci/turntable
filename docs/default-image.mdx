@@ -16,13 +16,13 @@ Every download is pinned by version and checked against its sha256, every apt re
 | Ubuntu | 24.04 (noble) | `ubuntu:24.04`, pinned by digest |
 | git, git-lfs | Ubuntu 24.04 | apt |
 | GitHub CLI (`gh`) | latest stable at build | cli.github.com apt repository (key pinned) |
-| jq, zstd, curl, wget, zip, unzip, xz, rsync, openssh-client | Ubuntu 24.04 | apt |
+| jq, zstd, curl, wget, zip, unzip, xz, rsync, ripgrep, procps, openssh-client | Ubuntu 24.04 | apt |
 | build-essential, cmake, pkg-config | Ubuntu 24.04 | apt |
 | Development headers | libssl, libffi, zlib, libyaml, libreadline, libpq, libmysqlclient | apt |
 | Python | 3.13 (`python`, `python3`) | uv's managed Python |
 | uv | 0.11.16 | GitHub release, sha256 checked |
-| Node.js | 26.13.1 (LTS), with npm | nodejs.org, sha256 checked |
-| Bun | 1.4.5 | GitHub release, sha256 checked |
+| Node.js | 22.21.1 (LTS), with npm | nodejs.org, sha256 checked |
+| Bun | 1.4.4 | GitHub release, sha256 checked |
 | Ruby | 3.2 (`ruby-full`) | apt |
 | Go | 1.27.4 | go.dev, sha256 checked |
 | Java | Temurin 21 JDK | Adoptium apt repository (key pinned) |
@@ -90,7 +90,7 @@ GitHub's `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04` labels run on the si
 
 ## Per-project images
 
-A project can start from its own image instead: build it from its own Dockerfile, push it to a registry, and register it under its own name with `target_org` and `target_project` in the same call. That sets the project's `sandbox_snapshot`, which beats the size class's snapshot. `get_project_settings` shows the snapshot and, for a registered one, its image and digest under `sandbox_image`. `set_project_settings` can still name a snapshot made outside Turntable; its `sandbox_image` is then null.
+A project can start from its own image instead. To change only versions, build `images/ubuntu-24.04` with build args (for example `--build-arg BUN_VERSION=<v> --build-arg BUN_SHA256=<sum>`; each download takes a version and its checksum). Otherwise, build it from its own Dockerfile, push it to a registry, and register it under its own name with `target_org` and `target_project` in the same call. That sets the project's `sandbox_snapshot`, which beats the size class's snapshot. `get_project_settings` shows the snapshot and, for a registered one, its image and digest under `sandbox_image`. `set_project_settings` can still name a snapshot made outside Turntable; its `sandbox_image` is then null.
 
 ## Security
 

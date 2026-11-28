@@ -10,10 +10,10 @@ ARG BASE=ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd89
 FROM ${BASE}
 
 ARG TARGETARCH
-ARG NODE_VERSION=26.13.1
-ARG NODE_SHA256=5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864
-ARG BUN_VERSION=1.4.5
-ARG BUN_SHA256=94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb
+ARG NODE_VERSION=22.21.1
+ARG NODE_SHA256=680d3f30b24a7ff24b98db5e96f294c0070f8f9078df658da1bce1b9c9873c88
+ARG BUN_VERSION=1.4.4
+ARG BUN_SHA256=bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c
 ARG UV_VERSION=0.11.16
 ARG UV_SHA256=74947fe2c03315cf07e82ab3acc703eddef01aba4d5232a98e4c6825ec116131
 ARG PYTHON_VERSION=3.13
@@ -53,6 +53,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       git git-lfs gh jq zstd unzip zip xz-utils rsync wget less openssh-client sudo locales tzdata \
+      ripgrep procps \
       build-essential pkg-config make cmake libssl-dev libffi-dev zlib1g-dev libyaml-dev \
       libreadline-dev libpq-dev default-libmysqlclient-dev \
       ruby-full \
