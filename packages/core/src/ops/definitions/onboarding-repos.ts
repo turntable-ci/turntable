@@ -187,7 +187,9 @@ function ingestFor(
   // variable is added, when missing.
   const from = ingestSettingsSchema.safeParse(JSON.parse(stored)).data ?? null;
   if (from === null || from.vars?.TURNTABLE_CI !== undefined) return { from, to: undefined };
-  return { from, to: { ...from, vars: { ...from.vars, ...ONBOARD_VAR } } };
+  const to = ingestSettingsSchema.safeParse({ ...from, vars: { ...from.vars, ...ONBOARD_VAR } });
+  // Adding the variable must not push stored settings past the variable caps and make them unreadable.
+  return { from, to: to.success ? to.data : undefined };
 }
 
 export const onboardRepos = defineOp({

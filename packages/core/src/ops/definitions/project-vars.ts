@@ -96,15 +96,15 @@ export const setProjectVarOp = defineOp({
     "GitHub's rules (letters, digits, underscores; no `GITHUB_` prefix; at most 1000 per " +
     "project). The value is stored and shown as plain text, so never put a secret in it (use " +
     "`set_secret`). `TURNTABLE_CI` is reserved. Takes effect on the next ingest and in " +
-    "`preview_workflows`. The audit log records the name only. Needs operator or above; pass " +
-    "the project.",
+    "`preview_workflows`. The audit log records the name only. Needs release_operator or above, because the values reach protected and release runs; " +
+    "pass the project.",
   input: z.object({
     name: nameField,
     value: z.string().max(1024),
   }),
   output: z.object({ name: z.string(), created: z.boolean() }),
   effect: "write",
-  auth: { type: "token", minRole: "operator" },
+  auth: { type: "token", minRole: "release_operator" },
   untrustedOutput: false,
   scope: "project",
   logOmitFields: ["value"],
@@ -136,11 +136,12 @@ export const deleteProjectVarOp = defineOp({
   description:
     "Removes a variable: workflows that read it see it unset from the next ingest. " +
     "`TURNTABLE_CI` is reserved and cannot be removed. The audit log records the name only. " +
-    "Needs operator or above; pass the project.",
+    "Needs release_operator or above, because the values reach protected and release runs; pass " +
+    "the project.",
   input: z.object({ name: nameField }),
   output: z.object({ deleted: z.boolean() }),
   effect: "destructive",
-  auth: { type: "token", minRole: "operator" },
+  auth: { type: "token", minRole: "release_operator" },
   untrustedOutput: false,
   scope: "project",
   http: { method: "DELETE", path: "/project-vars" },

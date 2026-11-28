@@ -12270,7 +12270,7 @@
       "post": {
         "operationId": "set_project_var",
         "summary": "Create or replace one workflow variable (`vars.NAME`) of a project.",
-        "description": "Sets a non-secret variable for the project's workflows: `${{ vars.NAME }}`. Names follow GitHub's rules (letters, digits, underscores; no `GITHUB_` prefix; at most 1000 per project). The value is stored and shown as plain text, so never put a secret in it (use `set_secret`). `TURNTABLE_CI` is reserved. Takes effect on the next ingest and in `preview_workflows`. The audit log records the name only. Needs operator or above; pass the project.\n\nRequired role: operator. Side effects: write; audited.",
+        "description": "Sets a non-secret variable for the project's workflows: `${{ vars.NAME }}`. Names follow GitHub's rules (letters, digits, underscores; no `GITHUB_` prefix; at most 1000 per project). The value is stored and shown as plain text, so never put a secret in it (use `set_secret`). `TURNTABLE_CI` is reserved. Takes effect on the next ingest and in `preview_workflows`. The audit log records the name only. Needs release_operator or above, because the values reach protected and release runs; pass the project.\n\nRequired role: release_operator. Side effects: write; audited.",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -12353,13 +12353,13 @@
           }
         ],
         "x-turntable-effect": "write",
-        "x-turntable-min-role": "operator",
+        "x-turntable-min-role": "release_operator",
         "x-turntable-untrusted-output": false
       },
       "delete": {
         "operationId": "delete_project_var",
         "summary": "Delete one workflow variable of a project.",
-        "description": "Removes a variable: workflows that read it see it unset from the next ingest. `TURNTABLE_CI` is reserved and cannot be removed. The audit log records the name only. Needs operator or above; pass the project.\n\nRequired role: operator. Side effects: destructive; audited.",
+        "description": "Removes a variable: workflows that read it see it unset from the next ingest. `TURNTABLE_CI` is reserved and cannot be removed. The audit log records the name only. Needs release_operator or above, because the values reach protected and release runs; pass the project.\n\nRequired role: release_operator. Side effects: destructive; audited.",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -12435,7 +12435,7 @@
           }
         ],
         "x-turntable-effect": "destructive",
-        "x-turntable-min-role": "operator",
+        "x-turntable-min-role": "release_operator",
         "x-turntable-untrusted-output": false
       }
     },

@@ -4,7 +4,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { bindRepo, getProjectIngest, listAudit, setProjectIngest, type Db } from "../src/db";
 import { upsertInstallation } from "../src/db/repos";
 import { dispatch, registry, type DispatchEnv } from "../src/ops";
-import { ingestSettingsSchema } from "../src/poll/config";
+import { ingestSettingsSchema, varsSchema } from "../src/poll/config";
 import type { RepoReader } from "../src/poll/onboarding-forge";
 import { mintToken, seedWorld, type Tenant } from "./ops-helpers";
 import { SHA } from "./github-stub";
@@ -38,8 +38,8 @@ beforeEach(async () => {
   ({ db, a, b } = await seedWorld());
   env = { registry, db, now: () => 1_800_000_000_000, repoReader: async () => repoReader };
   reader = (await mintToken(db, a.scope, "reader")).secret;
-  operator = (await mintToken(db, a.scope, "operator")).secret;
-  bOperator = (await mintToken(db, b.scope, "operator")).secret;
+  operator = (await mintToken(db, a.scope, "release_operator")).secret;
+  bOperator = (await mintToken(db, b.scope, "release_operator")).secret;
   for (const t of [a, b]) {
     await setProjectIngest(
       db,
@@ -86,6 +86,9 @@ const storedVars = async (t: Tenant) =>
 test("an operator sets, replaces and deletes; a reader can list but not change", async () => {
   expect((await call(reader, "set_project_var", { name: "VITE_X", value: "1" })).ok).toBe(false);
   expect((await call(reader, "delete_project_var", { name: "TURNTABLE_CI" })).ok).toBe(false);
+  const plain = (await mintToken(db, a.scope, "operator")).secret;
+  expect((await call(plain, "set_project_var", { name: "VITE_X", value: "1" })).ok).toBe(false);
+  expect((await call(plain, "delete_project_var", { name: "VITE_X" })).ok).toBe(false);
   const set = await call(operator, "set_project_var", { name: "VITE_X", value: "1" });
   expect(set.ok && (set.output as { created: boolean }).created).toBe(true);
   const again = await call(operator, "set_project_var", { name: "vite_x", value: "2" });
@@ -150,13 +153,16 @@ test("tenant isolation: org B cannot see or change org A's variables", async () 
   await call(bOperator, "set_project_var", { name: "VITE_B", value: "b" });
   expect(Object.keys((await storedVars(a))!).toSorted()).toEqual(["TURNTABLE_CI", "VITE_A_ONLY"]);
   expect(Object.keys((await storedVars(b))!).toSorted()).toEqual(["TURNTABLE_CI", "VITE_B"]);
-  // another org's project, named explicitly, is refused too
-  const named = await call(bOperator, "set_project_var", {
-    project: a.projectSlug,
-    name: "VITE_X",
-    value: "1",
-  });
-  expect(named.ok && Object.keys((await storedVars(a))!)).not.toContain("VITE_X");
+  // A slug resolves inside the caller's own org, so B naming A's slug reaches B's project; A's variables are untouched.
+  await call(bOperator, "set_project_var", { project: a.projectSlug, name: "VITE_X", value: "1" });
+  expect(Object.keys((await storedVars(a))!)).not.toContain("VITE_X");
+});
+
+test("the variables' total size is capped", () => {
+  const big = "x".repeat(1024);
+  const mk = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`V${i}`, big]));
+  expect(varsSchema.safeParse(mk(200)).success).toBe(true);
+  expect(varsSchema.safeParse(mk(300)).success).toBe(false);
 });
 
 test("preview_workflows marks the var provided once it is set", async () => {

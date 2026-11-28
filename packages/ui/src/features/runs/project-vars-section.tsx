@@ -158,7 +158,7 @@ export function ProjectVarsSection({
   return (
     <ProjectVarsPanel
       vars={list.data}
-      canEdit={role !== null && meetsRole(role, "operator")}
+      canEdit={role !== null && meetsRole(role, "release_operator")}
       busy={busy}
       error={error}
       onSave={(name, value) => void run(() => api.setProjectVar({ org, project, name, value }))}
