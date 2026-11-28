@@ -8,10 +8,20 @@ import {
   SpecError,
   type ProviderError,
 } from "../errors";
-import type { Labels, Provider, ProviderInfo, SandboxInfo, SandboxSpec } from "../types";
+import {
+  parsePinnedImage,
+  type ImageRegistration,
+  type ImageRegistrationRequest,
+  type Labels,
+  type Provider,
+  type ProviderInfo,
+  type SandboxInfo,
+  type SandboxSpec,
+} from "../types";
 import { createWrappedExec, type ShellRunner, type WrappedExecOptions } from "../wrapped-exec";
 
-export type FakeOp = "healthcheck" | "create" | "destroy" | "list" | "exec" | "files";
+export type FakeOp =
+  "healthcheck" | "create" | "destroy" | "list" | "exec" | "files" | "registerImage";
 
 export interface FakeWorldOptions {
   /** Shell used for `sh`. Point at /bin/dash to exercise the dash code path. Default /bin/sh. */
@@ -77,6 +87,9 @@ export class FakeWorld {
   provider(): Provider {
     return new FakeProvider(this, this.generation);
   }
+
+  /** Snapshots registered with `registerImage`, by name: the pinned image each was made from. */
+  readonly images = new Map<string, { image: string; digest: string }>();
 
   /** Kills every existing provider instance: their next call throws InfraError. */
   dropConnections(): void {
@@ -303,6 +316,18 @@ class FakeProvider implements Provider {
         return f.bytes();
       },
     };
+  }
+
+  async registerImage(req: ImageRegistrationRequest): Promise<ImageRegistration> {
+    await this.world.enter("registerImage", this.gen);
+    const pinned = parsePinnedImage(req.image);
+    if (!pinned) throw new SpecError("the image is not pinned by digest");
+    const had = this.world.images.get(req.name);
+    // Like a real account: a name is taken once; re-registering the same digest is a no-op.
+    if (had && had.digest !== pinned.digest)
+      throw new SpecError(`snapshot ${req.name} already exists with another image`);
+    this.world.images.set(req.name, { image: req.image, digest: pinned.digest });
+    return { name: req.name, digest: pinned.digest, state: "ready" };
   }
 
   async healthcheck(): Promise<void> {

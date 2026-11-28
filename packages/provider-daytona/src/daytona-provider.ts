@@ -7,7 +7,10 @@ import {
   createWrappedExec,
   readCapped,
   shellQuote,
+  parsePinnedImage,
   type ClassRealisation,
+  type ImageRegistration,
+  type ImageRegistrationRequest,
   type Labels,
   type ProviderClassSettings,
   type SandboxResources,
@@ -712,6 +715,41 @@ export class DaytonaProvider implements Provider {
 
   // ---- Provider ----
 
+  /**
+   * Creates a Daytona snapshot from a digest-pinned registry image, with the instance's own key
+   * (#809). Only the instance operator's `register_sandbox_image` calls it: sandboxes never create
+   * snapshots. Daytona pulls the image by its digest once, here; a sandbox then starts from the
+   * snapshot by name. A name that already exists is accepted only when it holds the same digest.
+   */
+  async registerImage(req: ImageRegistrationRequest): Promise<ImageRegistration> {
+    const pinned = parsePinnedImage(req.image);
+    if (!pinned) throw new SpecError("the image is not pinned by digest (repo@sha256:...)");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(req.name))
+      throw new SpecError("a snapshot name is letters, digits, . _ - (up to 128)");
+    const r = req.resources;
+    const body: Record<string, unknown> = { name: req.name, imageName: req.image };
+    if (r?.cpus !== undefined) body.cpu = r.cpus;
+    if (r?.memoryMb !== undefined) body.memory = Math.max(1, Math.ceil(r.memoryMb / 1024));
+    if (r?.diskGb !== undefined) body.disk = r.diskGb;
+    type Snap = { name?: string; state?: string; imageName?: string };
+    let snap: Snap;
+    try {
+      snap = await this.api.json<Snap>("POST", "/snapshots", { json: body, timeoutMs: 60_000 });
+    } catch (e) {
+      if (!(e instanceof SpecError && / 409 /.test(e.message))) throw e;
+      snap = await this.api.json<Snap>("GET", `/snapshots/${encodeURIComponent(req.name)}`, {
+        timeoutMs: 20_000,
+      });
+      if (parsePinnedImage(snap.imageName ?? "")?.digest !== pinned.digest)
+        throw new SpecError(`snapshot ${req.name} already exists with another image`);
+    }
+    return {
+      name: req.name,
+      digest: pinned.digest,
+      state: snap.state === "active" ? "ready" : "pending",
+    };
+  }
+
   async healthcheck(): Promise<void> {
     await this.api.json("GET", "/sandbox", { query: { limit: 1 }, timeoutMs: 20_000 });
   }
@@ -857,7 +895,7 @@ export class DaytonaProvider implements Provider {
               ? `snapshot ${snap} does not exist`
               : `snapshot ${snap} could not be read`,
           ...(e instanceof SandboxNotFoundError ? {} : { detail: reason(e) }),
-          fix: "Create the snapshot in the Daytona account, or fix the name in the provider config. Turntable never creates snapshots.",
+          fix: "Create the snapshot in the Daytona account (or register an image with register_sandbox_image), or fix the name in the provider config. Sandboxes never create snapshots.",
         });
       }
     }

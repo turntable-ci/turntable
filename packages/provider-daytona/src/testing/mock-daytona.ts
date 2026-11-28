@@ -71,6 +71,8 @@ export function startMock(
 
   /** Names of the snapshots that exist in the mock account. */
   const snapshots = new Set<string>();
+  /** The image each snapshot created through POST /snapshots was made from. */
+  const snapshotImages = new Map<string, string>();
 
   const server = Bun.serve({
     port: 0,
@@ -93,9 +95,25 @@ export function startMock(
       const snap = /^\/api\/snapshots\/([^/]+)$/.exec(url.pathname);
       if (snap && req.method === "GET") {
         const name = decodeURIComponent(snap[1]!);
+        const imageName = snapshotImages.get(name);
         return snapshots.has(name)
-          ? Response.json({ name, state: "active" })
+          ? Response.json({ name, state: "active", ...(imageName ? { imageName } : {}) })
           : Response.json({ message: "no such snapshot" }, { status: 404 });
+      }
+      if (url.pathname === "/api/snapshots" && req.method === "POST") {
+        const b = body as { name?: string; imageName?: string };
+        if (!b.name || !b.imageName)
+          return Response.json({ message: "name and imageName are required" }, { status: 400 });
+        if (snapshots.has(b.name))
+          return Response.json({ message: "snapshot already exists" }, { status: 409 });
+        snapshots.add(b.name);
+        snapshotImages.set(b.name, b.imageName);
+        return Response.json({
+          id: `snap-${b.name}`,
+          name: b.name,
+          imageName: b.imageName,
+          state: "pending",
+        });
       }
       const m = /^\/api\/sandbox(?:\/([^/]+))?$/.exec(url.pathname);
       if (m) {
@@ -290,6 +308,7 @@ export function startMock(
     failNext,
     usage,
     snapshots,
+    snapshotImages,
     stats,
     setHugeList(v: boolean) {
       hugeList = v;

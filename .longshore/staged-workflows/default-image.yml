@@ -1,0 +1,77 @@
+# STAGED (#809): the lane token cannot push .github/workflows. Move this file to
+# .github/workflows/default-image.yml as is. It builds images/ubuntu-24.04 on every change to it,
+# smoke-tests the built image, and on main only pushes it to GHCR by digest through the same
+# `release` environment and PUBLISH_FROM_GITHUB gate as the release image.
+name: default-image
+
+on:
+  pull_request:
+    paths: ["images/ubuntu-24.04/**"]
+  push:
+    branches: [main]
+    paths: ["images/ubuntu-24.04/**"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: default-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    # Not under Turntable: building an image needs Docker, which its sandboxes lack.
+    if: vars.TURNTABLE_CI != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image (not pushed)
+        run: docker build -t turntable-ubuntu-24.04:ci images/ubuntu-24.04
+      - name: Smoke test (toolchain, turntable-svc postgres, redis, mysql)
+        run: docker run --rm -v "$PWD/images/ubuntu-24.04/smoke.sh:/smoke.sh:ro" turntable-ubuntu-24.04:ci bash /smoke.sh # pin-ok: the image built by the step above
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.TURNTABLE_CI != 'true' && vars.PUBLISH_FROM_GITHUB == 'true'
+    needs: build
+    # Publishes an image: gated by the same environment as the release image.
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The tag is only a label for people; Turntable registers and runs the image by digest.
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/ubuntu-24.04
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/turntable-ci/turntable-ubuntu-24.04:24.04-${{ github.sha }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/turntable-ci/turntable-ubuntu-24.04
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: The digest to register
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          echo "ghcr.io/turntable-ci/turntable-ubuntu-24.04@${DIGEST}" | tee -a "$GITHUB_STEP_SUMMARY"

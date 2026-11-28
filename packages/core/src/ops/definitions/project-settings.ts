@@ -22,6 +22,8 @@ import { lockSettingKey } from "../../db/repos/settings";
 import { effectiveApproval, guardSettingChange } from "../setting-guard";
 import { defineOp, type OpContext } from "../define";
 import { OpError } from "../errors";
+import { getSandboxImage } from "../../db/repos/sandbox-images";
+import { imageView, sandboxImageShape } from "./sandbox-images";
 
 const EGRESS = ["none", "allowlist", "open"] as const;
 /** Tightness: a higher rank is tighter. */
@@ -35,6 +37,11 @@ const settingsShape = z.object({
     .string()
     .nullable()
     .describe("The provider snapshot this project's sandboxes start from; null is the default."),
+  sandbox_image: sandboxImageShape
+    .nullable()
+    .describe(
+      "The registered image behind `sandbox_snapshot` (`register_sandbox_image`): its digest-pinned ref. Null when no snapshot is set or it was not registered through Turntable.",
+    ),
   max_concurrent: z
     .int()
     .nullable()
@@ -45,6 +52,12 @@ const settingsShape = z.object({
       "Who may approve a run held for an untrusted author: human (an enrolled approver's signature only), no_agents (default: not over MCP, not with an agent token) or any.",
     ),
 });
+
+async function imageOf(db: OpContext["db"], snapshot: string | null) {
+  if (snapshot === null) return null;
+  const img = await getSandboxImage(db, snapshot);
+  return img ? imageView(img) : null;
+}
 
 export const getProjectSettings = defineOp({
   name: "get_project_settings",
@@ -79,6 +92,7 @@ export const getProjectSettings = defineOp({
       project: ctx.scope.projectId,
       egress: await getProjectEgress(ctx.db, ctx.scope),
       sandbox_snapshot: s.sandboxSnapshot,
+      sandbox_image: await imageOf(ctx.db, s.sandboxSnapshot),
       max_concurrent: s.maxConcurrent,
       untrusted_run_approval: s.untrustedRunApproval,
     };
@@ -182,6 +196,7 @@ export const setProjectSettings = defineOp({
       project: project.id,
       egress: await getProjectEgress(ctx.db, scope),
       sandbox_snapshot: to.sandboxSnapshot,
+      sandbox_image: await imageOf(ctx.db, to.sandboxSnapshot),
       max_concurrent: to.maxConcurrent,
       untrusted_run_approval: to.untrustedRunApproval,
     };
