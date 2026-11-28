@@ -25,3 +25,4 @@ packages/ui/tests/update-banner.test.tsx
 packages/ui/tests/approval-default-notice.test.tsx
 packages/ui/tests/egress-section.test.tsx
 packages/ui/tests/pr-policy-section.test.tsx
+packages/ui/tests/project-vars.test.tsx

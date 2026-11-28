@@ -161,6 +161,13 @@ import {
 } from "./definitions/webhooks";
 import { setOidcAudiencesOp } from "./definitions/oidc-audiences";
 import {
+  deleteProjectVarInstanceOp,
+  deleteProjectVarOp,
+  listProjectVarsOp,
+  setProjectVarInstanceOp,
+  setProjectVarOp,
+} from "./definitions/project-vars";
+import {
   getSettingOp,
   instanceGetSettingOp,
   instanceListSettingsOp,
@@ -316,6 +323,11 @@ export const registry = createRegistry([
   instanceBindGithubLoginOp,
   resyncInstallation,
   setOidcAudiencesOp,
+  listProjectVarsOp,
+  setProjectVarOp,
+  deleteProjectVarOp,
+  setProjectVarInstanceOp,
+  deleteProjectVarInstanceOp,
   getProjectSettings,
   setProjectSettings,
   registerSandboxImage,

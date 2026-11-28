@@ -14,6 +14,7 @@ import type { WireRunDetail } from "../wire";
 export function createFixtureOnboarding(): OnboardingApi {
   const orgs = [{ slug: "acme", display_name: "Acme", role: "owner" as string }];
   let bound = false;
+  const projectVars = [{ name: "TURNTABLE_CI", value: "true", reserved: true }];
   const repos: InstallationRepo[] = [
     {
       repo: "acme/web",
@@ -147,6 +148,22 @@ export function createFixtureOnboarding(): OnboardingApi {
     },
     async removeProjectChallenge() {
       throw new ApiError(400, "unavailable", "The demo has no passkeys to confirm with.");
+    },
+    async listProjectVars() {
+      return projectVars.map((v) => ({ ...v }));
+    },
+    async setProjectVar({ name, value }) {
+      if (name.toUpperCase() === "TURNTABLE_CI")
+        throw new ApiError(400, "invalid_input", "TURNTABLE_CI is reserved and cannot be set");
+      const cur = projectVars.find((v) => v.name.toUpperCase() === name.toUpperCase());
+      if (cur) cur.value = value;
+      else projectVars.push({ name, value, reserved: false });
+      return { name, created: !cur };
+    },
+    async deleteProjectVar({ name }) {
+      const at = projectVars.findIndex((v) => v.name === name && !v.reserved);
+      if (at < 0) throw new ApiError(400, "invalid_input", `${name} cannot be removed`);
+      projectVars.splice(at, 1);
     },
     async previewWorkflows() {
       return {
