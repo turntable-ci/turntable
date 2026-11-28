@@ -46,18 +46,23 @@ probe() {
   done
   return 0
 }
-mode=direct
-( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ); rc=$?
-[ $rc -eq 0 ] || exit $rc
 # Only curl and wget take a proxy from their environment or config (~/.curlrc, ~/.wgetrc, which
-# the direct pass's --noproxy overrides), so always run the pass as a job step sees it. A proxy
-# does not matter to nc or bash.
+# the direct pass's --noproxy overrides), so also run a pass as a job step sees it. A proxy
+# does not matter to nc or bash. The passes run side by side so the worst case stays one pass
+# (targets x 3s), inside the probe's wall clock.
+mode=direct
+( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ) &
+p1=$!
+p2=
 if [ "$tool" = curl ] || [ "$tool" = wget ]; then
-  mode=env
-  ( probe "$@" ); rc=$?
-  [ $rc -eq 0 ] || exit $rc
+  ( mode=env; probe "$@" ) &
+  p2=$!
 fi
-exit 0
+wait $p1; rc1=$?
+rc2=0
+[ -z "$p2" ] || { wait $p2; rc2=$?; }
+[ $rc1 -eq 0 ] || exit $rc1
+exit $rc2
 `.replace(/\\\$/g, "$");
 
 export type CanaryVerdict =
