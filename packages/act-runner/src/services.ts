@@ -116,6 +116,13 @@ export function bindServicePorts(
   const parsed: Parsed[] = [];
   for (const [id, spec] of Object.entries(services)) {
     // act merges -p/--publish/-P from options into the port bindings, past the loopback rewrite.
+    // act interpolates ${{ }} in options at run time, past this check, so refuse any expression.
+    if (isObj(spec) && typeof spec.options === "string" && spec.options.includes("${{")) {
+      throw new PlanError(
+        "services",
+        `service "${id}" options cannot use an expression: write the options out literally`,
+      );
+    }
     if (isObj(spec) && typeof spec.options === "string" && publishesPort(spec.options)) {
       throw new PlanError(
         "services",

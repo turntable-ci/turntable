@@ -145,6 +145,17 @@ describe("service options cannot publish ports (#796)", () => {
       expect(r.ports.db).toEqual({ "5432": "5432" });
     });
   }
+  for (const options of [
+    "${{ matrix.opts }}",
+    "--health-cmd pg_isready ${{ vars.X }}",
+    "${{ format('-{0} 5432:5432', 'p') }}",
+  ]) {
+    test(`refuses an expression in options: ${options}`, () => {
+      expect(() => bindServicePorts({ db: { image: "p", ports: ["5432"], options } })).toThrow(
+        /cannot use an expression/,
+      );
+    });
+  }
   test("tcp and udp on the same host port do not collide", () => {
     const r = bindServicePorts({ dns: { image: "d", ports: ["53:53/tcp", "53:53/udp"] } });
     expect(r.services.dns).toEqual({
