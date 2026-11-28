@@ -229,6 +229,12 @@ export const previewWorkflowsOutput = z.object({
           verdict: z.enum(["run", "skip", "fail"]).describe("What Turntable would do."),
           reason: z.string().optional().describe("Why, for skip and fail."),
           fix: z.string().optional().describe("How to fix a fail."),
+          mode: z
+            .enum(["host", "container"])
+            .optional()
+            .describe(
+              "For run: `host` (steps run on the sandbox itself) or `container` (act's container mode on the Docker-capable size class, for a job with services: or container:).",
+            ),
           will_run: z
             .boolean()
             .describe(

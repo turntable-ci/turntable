@@ -10,7 +10,11 @@ import type { GithubFacts, GithubUserLookup } from "../github/api";
 import type { InstallationClaims } from "../github/claim";
 import type { UserGithub } from "../auth/user-tokens";
 import type { RunDispatcher } from "../poll/dispatch";
-import type { DefaultBranchRunner, RepoReaderFactory } from "../poll/onboarding-forge";
+import type {
+  ContainerJobs,
+  DefaultBranchRunner,
+  RepoReaderFactory,
+} from "../poll/onboarding-forge";
 import type { SecretStore } from "../secrets/store";
 import type { SecretVault } from "../secrets/vault";
 import type { DoctorReport } from "../doctor/types";
@@ -61,6 +65,8 @@ export type OpContext = {
   githubFacts?: GithubFacts | undefined;
   /** Starts a `workflow_dispatch` run through the poller; absent where this process has none. */
   runDispatcher?: RunDispatcher | undefined;
+  /** Whether a `services:` or `container:` job can run here, for the preview (#796). */
+  containerJobs?: ContainerJobs | undefined;
   /** Read-only reader of one repo of an installation (the onboarding preview); absent without a GitHub App. */
   repoReader?: RepoReaderFactory | undefined;
   /** Starts a default-branch push run through the poller; absent where this process has none. */

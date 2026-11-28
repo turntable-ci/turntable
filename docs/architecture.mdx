@@ -57,6 +57,7 @@ A transient infrastructure failure is retried once. An `infra_error` carries a k
 | Kind | Cause | Retried |
 | --- | --- | --- |
 | `docker_daemon_unavailable` | `docker info` failed in a Docker-class sandbox | yes, every class |
+| `service_unhealthy` | a job's service container did not report healthy within act's 5 minute limit, so no step ran | no (usually the service's own config) |
 | `sandbox_create_failed` | the provider could not create the sandbox | yes, every class |
 | `sandbox_lost` | the sandbox or the act process in it vanished, possibly mid-run | only `trusted_pr` and `untrusted_pr` jobs |
 | `image_pull_rate_limited` | reserved, nothing produces it yet (preflight) | yes, every class |

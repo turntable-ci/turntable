@@ -12,6 +12,15 @@ export const INFRA_KINDS = {
     beforeSteps: true,
     label: "the sandbox's Docker daemon was unavailable",
   },
+  /**
+   * A job's service container never reported healthy within act's 5 minute limit (#796): the
+   * steps did not start. Usually the service's own config (env, --health-cmd), so never retried.
+   */
+  service_unhealthy: {
+    transient: false,
+    beforeSteps: true,
+    label: "a service container did not become healthy",
+  },
   /** The provider could not create the sandbox. */
   sandbox_create_failed: {
     transient: true,

@@ -13,6 +13,7 @@ export * from "./expr";
 export * from "./triggers";
 export * from "./workflow-plan";
 export * from "./split";
+export * from "./services";
 export * from "./readiness";
 export * from "./history-need";
 export * from "./taint";

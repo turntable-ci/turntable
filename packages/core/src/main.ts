@@ -37,7 +37,7 @@ import { backupBeforeMigrate, backupKeepFromEnv } from "./db/backup";
 import { ambientSettings, setAmbientSettings } from "./settings/ambient";
 import { loadSettingsRuntime } from "./settings/boot";
 import { LiveLimits } from "./scheduler/live-limits";
-import { setOperatorSizes } from "./scheduler/sandbox-size";
+import { dockerRefusal, setOperatorSizes } from "./scheduler/sandbox-size";
 import { DIALECT } from "./db/dialect";
 import { SYSTEM_ORG_SLUG } from "./audit/failures";
 import { startCheckpointer } from "./audit/checkpoint";
@@ -89,7 +89,11 @@ import { setLogStore } from "./logstore/registry";
 import { bootstrapExpiryDays, bootstrapInstanceToken } from "./ops/instance-bootstrap";
 import { generateInstanceToken, generateToken, hashToken } from "./ops/tokens";
 import { DispatchError, Poller, type RunDispatcher } from "./poll";
-import type { DefaultBranchRunner, RepoReaderFactory } from "./poll/onboarding-forge";
+import type {
+  ContainerJobs,
+  DefaultBranchRunner,
+  RepoReaderFactory,
+} from "./poll/onboarding-forge";
 import {
   resolvePollConfig,
   resolveProviderConfig,
@@ -290,6 +294,7 @@ async function startBackground(
   dispatch: RunDispatcher | undefined;
   repoReader: RepoReaderFactory | undefined;
   runDefaultBranch: DefaultBranchRunner | undefined;
+  containerJobs: ContainerJobs | undefined;
   /** Egress modes the worker's provider can enforce; undefined without a worker role. */
   providerEgress(): readonly string[] | undefined;
   /** The worker's provider's image registration; undefined without one. */
@@ -344,6 +349,8 @@ async function startBackground(
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let poller: Poller | undefined;
   let workerProvider: Provider | undefined;
+  // The size map read at startup, the same snapshot the scheduler routes with (#796).
+  let startupSizes: ReturnType<typeof resolveSandboxSizes>;
   let secretsProxy: SecretsProxy | undefined;
 
   if (v.worker) {
@@ -453,6 +460,7 @@ async function startBackground(
         : undefined;
     // The operator's map from runs-on labels to a sandbox size (none: providers' default size).
     const sandboxSizes = resolveSandboxSizes();
+    startupSizes = sandboxSizes;
     if (sandboxSizes)
       console.log(
         `sandbox sizes: ${Object.keys(sandboxSizes.classes).length} class(es), ${Object.keys(sandboxSizes.labels).length} label(s)`,
@@ -619,6 +627,17 @@ async function startBackground(
     nudge: (repo) => poller?.nudge(repo) ?? false,
     dispatch: poller ? (scope, repo, req) => poller!.dispatch(scope, repo, req) : undefined,
     repoReader: poller ? (inst, repo) => poller!.repoReader(inst, repo) : undefined,
+    // The preview's answer for a `services:` or `container:` job (#796): the same refusal rule
+    // the scheduler applies, for a trusted run on this worker's provider and size map.
+    containerJobs: workerProvider
+      ? (need) => {
+          const reason = dockerRefusal(startupSizes, need, {
+            untrusted: false,
+            provider: workerProvider!.info,
+          });
+          return reason === undefined ? { runnable: true } : { runnable: false, reason };
+        }
+      : undefined,
     runDefaultBranch: poller ? (scope, repo) => poller!.runDefaultBranch(scope, repo) : undefined,
     providerEgress: () => workerProvider?.info.network.egressPolicy,
     imageRegistrar: () => {
@@ -1066,6 +1085,7 @@ async function serve(args: string[]): Promise<void> {
   // Set with it: the onboarding preview's repo reader and the default-branch run.
   let repoReader: RepoReaderFactory | undefined;
   let runDefaultBranch: DefaultBranchRunner | undefined;
+  let containerJobs: ContainerJobs | undefined;
   // Hosted multi-tenant installs: an org claims its own installation (github/claim.ts).
   const claimMode = process.env.TURNTABLE_CLAIM_INSTALLATIONS === "1";
   let checks: CheckReporter | undefined;
@@ -1319,6 +1339,7 @@ async function serve(args: string[]): Promise<void> {
                   "this process does not run the poller role, which starts dispatched runs",
                 ),
               ),
+        containerJobs: (need) => containerJobs?.(need),
         repoReader: (inst, repo) =>
           repoReader
             ? repoReader(inst, repo)
@@ -1395,6 +1416,7 @@ async function serve(args: string[]): Promise<void> {
   dispatchRun = background.dispatch;
   repoReader = background.repoReader;
   runDefaultBranch = background.runDefaultBranch;
+  containerJobs = background.containerJobs;
 
   let stopping = false;
   let exitCode = 0;

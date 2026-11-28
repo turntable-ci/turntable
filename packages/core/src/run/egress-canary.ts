@@ -21,27 +21,75 @@ elif command -v nc >/dev/null 2>&1; then tool=nc
 elif command -v bash >/dev/null 2>&1; then tool=bash
 fi
 [ -n "$tool" ] || exit 125
-for t in "$@"; do
-  h=\${t%:*}; p=\${t##*:}
-  case $tool in
-    curl)
-      code=$(curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
-      [ -n "$code" ] && [ "$code" != 000 ] && { echo "reachable $t"; exit 10; } ;;
-    wget)
-      wget -q -T 3 -t 1 -O /dev/null "http://$h:$p/" >/dev/null 2>&1; rc=$?
-      # 0: fetched; 8: the server answered with an error. Either way something answered.
-      [ $rc -eq 0 ] || [ $rc -eq 8 ] && { echo "reachable $t"; exit 10; } ;;
-    nc)
-      nc -z -w 3 "$h" "$p" >/dev/null 2>&1 && { echo "reachable $t"; exit 10; } ;;
-    bash)
-      timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" >/dev/null 2>&1 && { echo "reachable $t"; exit 10; } ;;
-  esac
-done
-exit 0
+# $mode is direct (proxy variables unset, so the network itself is tested) or env (the
+# environment as a job step sees it, so a forwarding proxy is caught too).
+# TEST-NET-1 (RFC 5737): never routable, so a proxy that really forwards cannot answer for it.
+CONTROL=192.0.2.1:80
+control_curl() { curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$CONTROL/" 2>/dev/null; }
+probe() {
+  for t in "$@"; do
+    h=\${t%:*}; p=\${t##*:}
+    case $tool in
+      curl)
+        if [ "$mode" = direct ]; then
+          r=$(curl --noproxy '*' -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$h:$p/" 2>/dev/null)
+        else
+          r=$(curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$h:$p/" 2>/dev/null)
+        fi
+        code=\${r%%:*}
+        if [ -n "$code" ] && [ "$code" != 000 ]; then
+          # Through the environment's proxy, an error reply that is the same for an address that
+          # cannot exist is the proxy refusing (a block-all gateway), not the target answering.
+          [ "$mode" = env ] && [ "$code" -ge 400 ] && [ "$r" = "$(control_curl)" ] && continue
+          echo "reachable $t curl $mode http $code"; exit 10
+        fi ;;
+      wget)
+        wget -q -T 3 -t 1 -O /dev/null "http://$h:$p/" >/dev/null 2>&1; rc=$?
+        # 0: fetched; 8: the server answered with an error. Either way something answered,
+        # unless (env) the same error comes back for an address that cannot exist.
+        if [ $rc -eq 0 ] || [ $rc -eq 8 ]; then
+          [ "$mode" = env ] && [ $rc -eq 8 ] && { wget -q -T 3 -t 1 -O /dev/null "http://$CONTROL/" >/dev/null 2>&1; [ $? -eq 8 ]; } && continue
+          echo "reachable $t wget $mode exit $rc"; exit 10
+        fi ;;
+      nc)
+        nc -z -w 3 "$h" "$p" >/dev/null 2>&1 && { echo "reachable $t nc $mode tcp connect"; exit 10; } ;;
+      bash)
+        timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" >/dev/null 2>&1 && { echo "reachable $t bash $mode tcp connect"; exit 10; } ;;
+    esac
+  done
+  return 0
+}
+# Only curl and wget take a proxy from their environment or config (~/.curlrc, ~/.wgetrc, which
+# the direct pass's --noproxy overrides), so also run a pass as a job step sees it. A proxy
+# does not matter to nc or bash. The passes run side by side so the worst case stays one pass
+# (targets x 3s), inside the probe's wall clock.
+# Each pass writes to its own file and the direct verdict is printed first, so the reported
+# detail does not depend on which pass finished first.
+o1=$(mktemp 2>/dev/null)
+# No writable temp directory: fall back to the working directory, then the home directory.
+[ -n "$o1" ] && [ -w "$o1" ] || { o1=./.canary1.$$; ( : >"$o1" ) 2>/dev/null || o1="\${HOME:-.}/.canary1.$$"; }
+o2="$o1.env"
+mode=direct
+( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ) >"$o1" 2>&1 &
+p1=$!
+p2=
+if [ "$tool" = curl ] || [ "$tool" = wget ]; then
+  ( mode=env; probe "$@" ) >"$o2" 2>&1 &
+  p2=$!
+fi
+wait $p1; rc1=$?
+rc2=0
+[ -z "$p2" ] || { wait $p2; rc2=$?; }
+cat "$o1" "$o2" 2>/dev/null
+rm -f "$o1" "$o2"
+[ $rc1 -eq 0 ] || exit $rc1
+exit $rc2
 `.replace(/\\\$/g, "$");
 
 export type CanaryVerdict =
-  { kind: "blocked" } | { kind: "reachable"; target: string } | { kind: "unknown"; why: string };
+  | { kind: "blocked" }
+  | { kind: "reachable"; target: string; detail?: string }
+  | { kind: "unknown"; why: string };
 
 export type CanaryOptions = {
   targets?: readonly string[];
@@ -75,8 +123,14 @@ export async function probeEgress(
         return { kind: "unknown", why: "no curl, wget, nc or bash in the image" };
       if (s.exitCode === 10) {
         const logs = await provider.exec.logs(sandboxId, execId, { fromOffset: 0, maxBytes: 4096 });
-        const m = /reachable (\S+)/.exec(dec.decode(logs.bytes));
-        return { kind: "reachable", target: m?.[1] ?? "a target" };
+        const m = /reachable (\S+)(?: (.*))?/.exec(dec.decode(logs.bytes));
+        // The probe output comes from inside the sandbox: cap what reaches an error message.
+        const detail = m?.[2]?.trim().slice(0, 120);
+        return {
+          kind: "reachable",
+          target: m?.[1]?.slice(0, 64) ?? "a target",
+          ...(detail ? { detail } : {}),
+        };
       }
       return { kind: "unknown", why: `probe exited ${s.exitCode}` };
     }
