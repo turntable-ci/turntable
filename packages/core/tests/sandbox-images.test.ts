@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parsePinnedImage } from "@turntable/provider-sdk";
 import { FakeWorld } from "@turntable/provider-sdk/testing";
+import { systemOrgId } from "../src/audit/failures";
 import { type Db, getProjectSandboxSettings, listAudit } from "../src/db";
 import { deleteProjectCascade } from "../src/db/repos/project-delete";
 import { listSandboxImages } from "../src/db/repos/sandbox-images";
@@ -194,6 +195,13 @@ describe("register_sandbox_image", () => {
     expect((await listSandboxImages(db)).map((x) => x.name)).toContain("gone");
     const audit = await listAudit(db, a.scope);
     expect(audit.some((x) => x.op === "register_sandbox_image")).toBe(false);
+    if (!r.ok) expect(r.error.details).toBeUndefined();
+    const sys = await listAudit(db, { orgId: await systemOrgId(db) });
+    const row = sys.find(
+      (x) => x.op === "register_sandbox_image" && x.outcome === "error:not_found",
+    );
+    expect(JSON.stringify(row?.input)).toContain('"recorded":true');
+    expect(JSON.stringify(row?.input)).toContain('"state"');
   });
 
   test("a project snapshot not registered through Turntable shows no sandbox_image", async () => {

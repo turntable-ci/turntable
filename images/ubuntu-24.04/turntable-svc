@@ -114,10 +114,13 @@ start_mysql() {
     --mysqlx=OFF >/dev/null
   wait_for mysql mysqladmin --socket="$sock" -u root ping
   if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
+    # MySQL string literals escape both the quote and the backslash.
+    local pw="${MYSQL_ROOT_PASSWORD//\\/\\\\}"
+    pw="${pw//\'/\'\'}"
     mysql --socket="$sock" -u root -e \
-      "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD//\'/\'\'}'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null ||
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY '$pw'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$pw'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>>"$DATA/mysql-init.log" ||
       MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --socket="$sock" -u root -e "SELECT 1" >/dev/null 2>&1 ||
-      die "mysql: could not set the root password (see $DATA/mysql.log)"
+      die "mysql: could not set the root password (see $DATA/mysql-init.log)"
   else
     mysql --socket="$sock" -u root -e \
       "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1'; GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;" 2>/dev/null ||

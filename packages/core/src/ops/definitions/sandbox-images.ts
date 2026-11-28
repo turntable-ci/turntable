@@ -201,7 +201,7 @@ export const registerSandboxImage = defineOp({
     );
     if (projectGone) {
       // The snapshot exists and is recorded: say so in the instance audit row.
-      throw new OpError("not_found", "no such project", {
+      throw new OpError("not_found", "no such project", undefined, {
         digest: pinned.digest,
         state: made.state,
         recorded: true,
