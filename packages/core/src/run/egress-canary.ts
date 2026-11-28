@@ -11,16 +11,9 @@ import type { Provider } from "@turntable/provider-sdk";
  *   10  a target answered (a breach)
  *   125 no tool to test with: curl, wget, nc or bash (unknown)
  */
-export const CANARY_TARGETS: readonly string[] = [
-  "1.1.1.1:80",
-  "169.254.169.254:80",
-  // Always reachable on an open network, so a pass here shows the block is real.
-  "github.com:80",
-];
+export const CANARY_TARGETS: readonly string[] = ["1.1.1.1:80", "169.254.169.254:80"];
 
 const PROBE_SH = String.raw`
-# Probe the network itself, never a configured proxy or gateway.
-unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 tool=
 if command -v curl >/dev/null 2>&1; then tool=curl
 elif command -v wget >/dev/null 2>&1; then tool=wget
@@ -28,22 +21,42 @@ elif command -v nc >/dev/null 2>&1; then tool=nc
 elif command -v bash >/dev/null 2>&1; then tool=bash
 fi
 [ -n "$tool" ] || exit 125
-for t in "$@"; do
-  h=\${t%:*}; p=\${t##*:}
-  case $tool in
-    curl)
-      code=$(curl --noproxy '*' -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
-      [ -n "$code" ] && [ "$code" != 000 ] && { echo "reachable $t curl http $code"; exit 10; } ;;
-    wget)
-      wget --no-proxy -q -T 3 -t 1 -O /dev/null "http://$h:$p/" >/dev/null 2>&1; rc=$?
-      # 0: fetched; 8: the server answered with an error. Either way something answered.
-      [ $rc -eq 0 ] || [ $rc -eq 8 ] && { echo "reachable $t wget exit $rc"; exit 10; } ;;
-    nc)
-      nc -z -w 3 "$h" "$p" >/dev/null 2>&1 && { echo "reachable $t nc tcp connect"; exit 10; } ;;
-    bash)
-      timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" >/dev/null 2>&1 && { echo "reachable $t bash tcp connect"; exit 10; } ;;
-  esac
-done
+# $mode is direct (proxy variables unset, so the network itself is tested) or env (the
+# environment as a job step sees it, so a forwarding proxy is caught too).
+probe() {
+  for t in "$@"; do
+    h=\${t%:*}; p=\${t##*:}
+    case $tool in
+      curl)
+        if [ "$mode" = direct ]; then
+          code=$(curl --noproxy '*' -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
+        else
+          code=$(curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
+        fi
+        [ -n "$code" ] && [ "$code" != 000 ] && { echo "reachable $t curl $mode http $code"; exit 10; } ;;
+      wget)
+        wget -q -T 3 -t 1 -O /dev/null "http://$h:$p/" >/dev/null 2>&1; rc=$?
+        # 0: fetched; 8: the server answered with an error. Either way something answered.
+        [ $rc -eq 0 ] || [ $rc -eq 8 ] && { echo "reachable $t wget $mode exit $rc"; exit 10; } ;;
+      nc)
+        nc -z -w 3 "$h" "$p" >/dev/null 2>&1 && { echo "reachable $t nc $mode tcp connect"; exit 10; } ;;
+      bash)
+        timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" >/dev/null 2>&1 && { echo "reachable $t bash $mode tcp connect"; exit 10; } ;;
+    esac
+  done
+  return 0
+}
+mode=direct
+( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ); rc=$?
+[ $rc -eq 0 ] || exit $rc
+# Only curl, wget and the shell read these variables. A proxy does not matter to nc or bash.
+if [ "$tool" = curl ] || [ "$tool" = wget ]; then
+  if [ -n "$HTTP_PROXY$http_proxy$ALL_PROXY$all_proxy" ]; then
+    mode=env
+    ( probe "$@" ); rc=$?
+    [ $rc -eq 0 ] || exit $rc
+  fi
+fi
 exit 0
 `.replace(/\\\$/g, "$");
 
@@ -85,7 +98,8 @@ export async function probeEgress(
       if (s.exitCode === 10) {
         const logs = await provider.exec.logs(sandboxId, execId, { fromOffset: 0, maxBytes: 4096 });
         const m = /reachable (\S+)(?: (.*))?/.exec(dec.decode(logs.bytes));
-        const detail = m?.[2]?.trim();
+        // The probe output comes from inside the sandbox: cap what reaches an error message.
+        const detail = m?.[2]?.trim().slice(0, 120);
         return {
           kind: "reachable",
           target: m?.[1] ?? "a target",

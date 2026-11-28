@@ -152,7 +152,7 @@ test.skipIf(!hasCurl)(
       ).toEqual({
         kind: "reachable",
         target: `127.0.0.1:${open.port}`,
-        detail: "curl http 200",
+        detail: "curl direct http 200",
       });
     } finally {
       open.close();
@@ -160,27 +160,50 @@ test.skipIf(!hasCurl)(
   },
 );
 
-test("the probe script ignores proxies and says how it reached a target", async () => {
-  const src = await Bun.file(new URL("../src/run/egress-canary.ts", import.meta.url)).text();
-  expect(src).toContain("curl --noproxy '*'");
-  expect(src).toContain("wget --no-proxy");
-  expect(src).toContain("unset HTTP_PROXY HTTPS_PROXY");
-});
+test.skipIf(!hasCurl)(
+  "a dead proxy in the environment does not hide a direct hole, and the direct path says so",
+  async () => {
+    const open = await listening();
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: "http://127.0.0.1:9",
+        http_proxy: "http://127.0.0.1:9",
+      });
+      expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] })).toMatchObject({
+        kind: "reachable",
+        detail: "curl direct http 200",
+      });
+    } finally {
+      open.close();
+    }
+  },
+);
 
-test.skipIf(!hasCurl)("a proxy in the environment is not used by the probe", async () => {
-  const open = await listening();
-  try {
-    const p = localProvider(REAL_PATH, {
-      HTTP_PROXY: "http://127.0.0.1:9",
-      http_proxy: "http://127.0.0.1:9",
-    });
-    expect(await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] })).toMatchObject({
-      kind: "reachable",
-      detail: "curl http 200",
-    });
-  } finally {
-    open.close();
-  }
+test.skipIf(!hasCurl)(
+  "a forwarding proxy in the environment is a breach even when the direct path is closed",
+  async () => {
+    // Answers every request, as a proxy that forwards would.
+    const proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${proxy.port}`,
+        http_proxy: `http://127.0.0.1:${proxy.port}`,
+      });
+      // Port 9 on loopback refuses: only the proxy path can answer.
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        target: "127.0.0.1:9",
+        detail: "curl env http 200",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)("a dead proxy and a closed direct path is blocked", async () => {
+  const p = localProvider(REAL_PATH, { HTTP_PROXY: "http://127.0.0.1:9" });
+  expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toEqual({ kind: "blocked" });
 });
 
 test("with no curl, wget, nc or bash the canary is unknown, not blocked", async () => {
@@ -190,7 +213,7 @@ test("with no curl, wget, nc or bash the canary is unknown, not blocked", async 
 });
 
 test("the default targets are a public IP and the metadata IP, by address so DNS cannot hide a hole", () => {
-  expect(CANARY_TARGETS).toEqual(["1.1.1.1:80", "169.254.169.254:80", "github.com:80"]);
+  expect(CANARY_TARGETS).toEqual(["1.1.1.1:80", "169.254.169.254:80"]);
 });
 
 // ---- the canary inside executeJob ----
