@@ -249,6 +249,8 @@ export interface SecretsProxyOptions {
 interface Live {
   scope: Required<Scope>;
   redact: SecretRegistry;
+  /** False while this controller's lease on the attempt may have lapsed (#789): inject nothing. */
+  leaseValid?: (() => boolean) | undefined;
   githubToken?: string | undefined;
   oidcMint?: (() => string) | undefined;
 }
@@ -331,6 +333,9 @@ export class SecretsProxy {
   async #resolve(scope: SecretScope, rule: Rule): Promise<ResolvedSecret> {
     const live = this.#live.get(scope.attemptId);
     if (!live || !rule.secret) return { ok: false, reason: "no_attempt" };
+    // Past this controller's lease, by its own clock, another controller may hold the attempt and
+    // its own credentials (#789): nothing of this one's is used until a heartbeat renews the lease.
+    if (live.leaseValid && !live.leaseValid()) return { ok: false, reason: "lease_lapsed" };
     if (rule.secret === GITHUB_TOKEN_SECRET) {
       // This attempt's own token, never a vault secret. Only the rules githubRules builds name it.
       if (!live.githubToken) return { ok: false, reason: "no_github_token" };
@@ -390,7 +395,16 @@ export class SecretsProxy {
    * still lists the rule's host. Never from a workflow.
    */
   async rulesFor(scope: Required<Scope>): Promise<Rule[]> {
+    return (await this.vaultPolicy(scope)).rules;
+  }
+
+  /**
+   * The project's rules (as `rulesFor`) and the stored rows they were built from: the policy
+   * inputs an adopted attempt's registration is compared on (#789), not the built rules.
+   */
+  async vaultPolicy(scope: Required<Scope>): Promise<{ rules: Rule[]; inputs: ProxyRuleRow[] }> {
     const out: Rule[] = [];
+    const inputs: ProxyRuleRow[] = [];
     for (const row of await listProxyRules(this.#o.db, scope)) {
       if (!(await this.#o.vault.canDeliver(scope.orgId, scope.projectId, row.secret, row.host))) {
         this.#o.log?.(
@@ -406,8 +420,9 @@ export class SecretsProxy {
         continue;
       }
       out.push(rule);
+      inputs.push(row);
     }
-    return out;
+    return { rules: out, inputs };
   }
 
   /** The hosts the project allows plain tunnels to. */
@@ -420,6 +435,10 @@ export class SecretsProxy {
     return `${this.#o.advertiseHost ?? "host.docker.internal"}:${this.#o.advertisePort ?? this.port}`;
   }
 
+  /**
+   * Registers a fresh attempt. `policy` (from `proxyPolicyHash`) is what an adoption is compared
+   * on; without it, the hash of the built rules (as before #789).
+   */
   register(
     ctx: AttemptContext,
     rules: readonly Rule[],
@@ -428,6 +447,7 @@ export class SecretsProxy {
       ttlMs: number;
       vaultRules?: boolean;
       artifactUpload?: boolean;
+      policy?: string;
     },
   ): { access: ProxyAccess; redact: SecretRegistry } {
     const seed = this.#o.seeds?.("proxy", { orgId: ctx.scope.orgId, attemptId: ctx.attempt.id });
@@ -444,7 +464,7 @@ export class SecretsProxy {
                   adopt: {
                     issuedAt,
                     ttlMs: o.ttlMs,
-                    rules: rulesHash(rules, o.passthroughHosts),
+                    rules: o.policy ?? rulesHash(rules, o.passthroughHosts),
                     endpoint: this.endpoint,
                     check: seedCheck(seed),
                   },
@@ -459,8 +479,14 @@ export class SecretsProxy {
    * Registers, for an attempt this controller adopted (#787), the credential the old controller
    * registered: the same seed, time and rules give the same password and CA, so the sandbox's
    * proxy URL and trusted CA still work. Refused (with why) when anything differs: no seed source,
-   * another master key, other rules or another endpoint. Nothing then runs with a credential that
-   * is not the one it had.
+   * another master key, another policy or another endpoint. Nothing then runs with a credential
+   * that is not the one it had.
+   *
+   * The policy is compared on its inputs (`policy`, from `proxyPolicyHash`), not on the rules this
+   * build makes of them (#789): a deploy that changes how rules are built, or the Rule type, does
+   * not refuse the attempts it takes over; only a changed project policy (or a bumped
+   * PROXY_POLICY_VERSION) does. A spec recorded before that holds the hash of the built rules, and
+   * is accepted while this build makes the same rules.
    */
   adopt(
     ctx: AttemptContext,
@@ -470,15 +496,17 @@ export class SecretsProxy {
       passthroughHosts: readonly PassthroughEntry[];
       vaultRules?: boolean;
       artifactUpload?: boolean;
+      policy?: string;
     },
   ): { ok: true; access: ProxyAccess; redact: SecretRegistry } | { ok: false; why: string } {
     const seed = this.#o.seeds?.("proxy", { orgId: ctx.scope.orgId, attemptId: ctx.attempt.id });
     if (!seed) return { ok: false, why: "this controller derives no proxy credentials" };
     if (!sameCheck(seed, spec.check)) return { ok: false, why: "the master key changed" };
     if (spec.endpoint !== this.endpoint) return { ok: false, why: "the proxy endpoint changed" };
-    if (rulesHash(rules, o.passthroughHosts) !== spec.rules) {
-      return { ok: false, why: "the attempt's proxy rules changed" };
-    }
+    const samePolicy =
+      (o.policy !== undefined && spec.rules === o.policy) ||
+      spec.rules === rulesHash(rules, o.passthroughHosts);
+    if (!samePolicy) return { ok: false, why: "the attempt's proxy rules changed" };
     if (spec.issuedAt + spec.ttlMs <= (this.#o.now ?? Date.now)()) {
       return { ok: false, why: "the credential has expired" };
     }
@@ -523,7 +551,11 @@ export class SecretsProxy {
       o.derive,
     );
     const redact = new SecretRegistry();
-    this.#live.set(ctx.attempt.id, { scope: ctx.scope, redact });
+    this.#live.set(ctx.attempt.id, {
+      scope: ctx.scope,
+      redact,
+      ...(ctx.leaseValid ? { leaseValid: ctx.leaseValid } : {}),
+    });
     const live = this.#live.get(ctx.attempt.id);
     return {
       access: {
@@ -562,9 +594,60 @@ export class SecretsProxy {
   }
 }
 
-/** The hash an adopted attempt's rules must match: what the credential was registered with. */
+/**
+ * The hash of the built rules: what a spec recorded before #789 holds. Accepted on adoption only
+ * while this build makes the same rules from the same inputs.
+ */
 function rulesHash(rules: readonly Rule[], passthrough: readonly PassthroughEntry[]): string {
   return specHash({ rules, passthrough });
+}
+
+/**
+ * The version of how rules are built from the policy inputs (#789). Bump it only when a change to
+ * the rule builders, or to the proxy's matching, must not be applied to an attempt that is already
+ * running: the next controller then refuses to adopt the attempts registered before (they end as a
+ * lost controller). A change that is fine for a running job (most are: the credential and CA do
+ * not depend on the rules) leaves it, and adopted attempts get this build's rules.
+ */
+export const PROXY_POLICY_VERSION = 1;
+
+/** What an attempt's proxy rules are built from: the project's policy, not the builder's output. */
+export interface ProxyPolicyInputs {
+  /** The project's rule rows that were kept (their secret still lists the host). */
+  vault: readonly ProxyRuleRow[];
+  passthrough: readonly PassthroughEntry[];
+  github: GithubTarget | undefined;
+  oidc: OidcTarget | undefined;
+  artifact: ArtifactTarget | undefined;
+}
+
+/**
+ * The hash an adopted attempt's policy must match (#789). Each input is named field by field, so a
+ * column added to a table or a field added to a target changes nothing until it is listed here
+ * (and listing one is a policy change: bump PROXY_POLICY_VERSION with it). No secret value is in
+ * any input: a rule names its secret, it never holds it.
+ */
+export function proxyPolicyHash(p: ProxyPolicyInputs): string {
+  const v = PROXY_POLICY_VERSION;
+  return `policy${v}:${specHash({
+    v,
+    vault: p.vault.map((r) => [
+      r.name,
+      r.secret,
+      r.host,
+      r.port,
+      r.methods,
+      r.pathPrefix,
+      r.injectType,
+      r.injectHeader ?? null,
+      r.injectFormat ?? null,
+      r.injectUsername ?? null,
+    ]),
+    passthrough: p.passthrough.map((e) => [e.host, [...e.ports]]),
+    github: p.github ? [p.github.owner, p.github.repo, p.github.installationId] : null,
+    oidc: p.oidc ? [p.oidc.host, p.oidc.port, p.oidc.pathPrefix] : null,
+    artifact: p.artifact ? [p.artifact.host, p.artifact.port] : null,
+  })}`;
 }
 
 export interface SecretsProxyRunnerOptions {
@@ -610,7 +693,8 @@ export function withSecretsProxy(
     const klass = parseTrust(ctx.run)?.class as TrustClass | undefined;
     if (klass === undefined) return runner(ctx);
     const mayHoldSecrets = klass !== "untrusted_pr" && credentialsFor(klass).secrets;
-    const vaultRules = mayHoldSecrets ? await o.proxy.rulesFor(ctx.scope) : [];
+    const vault = mayHoldSecrets ? await o.proxy.vaultPolicy(ctx.scope) : undefined;
+    const vaultRules = vault?.rules ?? [];
     const target = o.github ? await o.github(ctx) : undefined;
     const ghRules = target ? githubRules(target) : [];
     // The rule exists only for a job whose plan asked for an ID token, not for every job of a
@@ -627,6 +711,15 @@ export function withSecretsProxy(
       ...(artifactTarget ? artifactRules(artifactTarget) : []),
     ];
     const passthroughHosts = mayHoldSecrets ? await o.proxy.passthroughFor(ctx.scope) : [];
+    // What an adoption is compared on: the inputs, so a deploy that only changes how rules are
+    // built does not refuse the attempts it takes over (#789).
+    const policy = proxyPolicyHash({
+      vault: vault?.inputs ?? [],
+      passthrough: passthroughHosts,
+      github: ghRules.length > 0 ? target : undefined,
+      oidc: oidcTarget,
+      artifact: artifactTarget,
+    });
     const parsed = ctx.resume ? parseAdoptSpec(ctx.attempt.adoptSpec) : undefined;
     if (invalidSpec(parsed)) {
       return runner({
@@ -642,6 +735,7 @@ export function withSecretsProxy(
         passthroughHosts,
         vaultRules: vaultRules.length > 0,
         artifactUpload: artifactTarget !== undefined,
+        policy,
       });
       if (!r.ok) {
         // The runner releases the inherited sandbox and ends the attempt: returning here would
@@ -671,6 +765,7 @@ export function withSecretsProxy(
       ttlMs: o.ttlMs ?? 5 * 3600 * 1000,
       vaultRules: vaultRules.length > 0,
       artifactUpload: artifactTarget !== undefined,
+      policy,
     });
     return guarded(ctx, access, redact);
   };

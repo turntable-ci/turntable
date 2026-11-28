@@ -243,8 +243,9 @@ export class JobTokens {
   /**
    * A new token for an attempt another controller took over (#787), with the permissions the
    * first one was minted with and never wider: the job's workflow was read and capped then. With
-   * `readOnly` (the project is no longer live) every write is lowered to read. The job never held
-   * the first token (the proxy attached it), so nothing it has changes.
+   * `readOnly` (the project is no longer live) it gets exactly what a fresh read-only token gets,
+   * `contents: read` and `metadata: read`, never every stored scope at read (#789). The job never
+   * held the first token (the proxy attached it), so nothing it has changes.
    */
   async reissue(r: {
     installationId: string;
@@ -252,11 +253,14 @@ export class JobTokens {
     permissions: Readonly<Record<string, string>>;
     readOnly?: boolean;
   }): Promise<IssuedJobToken> {
-    const permissions: Record<string, "read" | "write"> = {};
+    const stored: Record<string, "read" | "write"> = {};
     for (const [k, v] of Object.entries(r.permissions)) {
       if (v !== "read" && v !== "write") throw new Error(`unexpected permission ${k}: ${v}`);
-      permissions[k] = r.readOnly === true ? "read" : v;
+      stored[k] = v;
     }
+    // The same cap `issue` applies to a project that is not live: these two scopes and no other.
+    const permissions: Record<string, "read" | "write"> =
+      r.readOnly === true ? { contents: "read", metadata: "read" } : stored;
     const minted = await this.#auth.mintFresh(r.installationId, {
       repositories: [r.repo],
       permissions,

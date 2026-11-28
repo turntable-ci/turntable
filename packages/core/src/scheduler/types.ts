@@ -94,6 +94,15 @@ export interface AttemptContext {
   /** Aborted when the lease is lost (cancelled, reconciled) or the scheduler stops hard. */
   signal: AbortSignal;
   /**
+   * False once this controller's lease may have lapsed by its own clock: no heartbeat renewed it
+   * before the time recorded with it (#789). Then another controller may already have taken the
+   * attempt over and minted its own credentials, so this one's must not be used: the secrets
+   * proxy injects nothing for the attempt (no GitHub token, no OIDC credential, no vault secret)
+   * until a heartbeat renews the lease, and `signal` aborts once the database says it is lost.
+   * Absent (a runner called outside the scheduler): always valid.
+   */
+  leaseValid?: () => boolean;
+  /**
    * Aborted when the scheduler hands the attempt off to the next controller (#761): stop watching
    * and return at once, leaving the exec running, the sandbox alive and any job token valid.
    */

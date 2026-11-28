@@ -62,7 +62,13 @@ export type EgressPolicyOptions = {
   explicit?: "none" | "open";
 };
 
-/** Wraps a runner so a job never starts where its egress policy cannot be enforced. */
+/**
+ * Wraps a runner so a job never starts where its egress policy cannot be enforced. A refused
+ * resume (#789) is not returned from here: the attempt inherited a sandbox and an exec from the
+ * last controller, so it goes to the runner as `refuseResume`, which stops the exec, releases the
+ * sandbox and ends the attempt with the reason, without running anything. A refusal an outer
+ * wrapper already made is kept as it is.
+ */
 export function withEgressPolicy(
   runner: AttemptRunner,
   o: EgressPolicyOptions = {},
@@ -73,7 +79,10 @@ export function withEgressPolicy(
       secretBearing: o.secretBearing?.(ctx) ?? false,
       provider: ctx.provider.info,
     });
-    if (!d.ok) return { state: "infra_error", reason: d.reason };
+    if (!d.ok) {
+      if (ctx.resume) return runner({ ...ctx, refuseResume: ctx.refuseResume ?? d.reason });
+      return { state: "infra_error", reason: d.reason };
+    }
     return runner(ctx);
   };
 }
