@@ -90,7 +90,11 @@ const tmp = mkdtempSync(join(tmpdir(), "ls-canary-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A provider whose exec runs the command on this machine; `path` sets what tools exist. */
-function localProvider(path: string, extraEnv: Record<string, string> = {}): Provider {
+function localProvider(
+  path: string,
+  extraEnv: Record<string, string> = {},
+  cwd?: string,
+): Provider {
   const results = new Map<string, { exit: number; out: string }>();
   let n = 0;
   return {
@@ -100,6 +104,7 @@ function localProvider(path: string, extraEnv: Record<string, string> = {}): Pro
         if (argv[0] === "sh") argv[0] = "/bin/sh";
         const p = Bun.spawn(argv, {
           env: { PATH: path, ...extraEnv },
+          ...(cwd ? { cwd } : {}),
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -441,3 +446,18 @@ test.skipIf(!hasCurl)("the canary still probes when no temp directory is writabl
     open.close();
   }
 });
+
+test.skipIf(!hasCurl)(
+  "the canary falls back to HOME when the temp dir and cwd are not writable",
+  async () => {
+    // /proc is never writable, so the working-directory fallback fails and HOME is used.
+    const p = localProvider(REAL_PATH, { TMPDIR: "/nonexistent-dir", HOME: tmp }, "/proc");
+    const open = await listening();
+    try {
+      const v = await probeEgress(p, "sbx", { targets: [`127.0.0.1:${open.port}`] });
+      expect(v.kind).toBe("reachable");
+    } finally {
+      open.close();
+    }
+  },
+);

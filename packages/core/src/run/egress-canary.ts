@@ -54,7 +54,7 @@ probe() {
 # detail does not depend on which pass finished first.
 o1=$(mktemp 2>/dev/null)
 # No writable temp directory: fall back to the working directory, then the home directory.
-[ -n "$o1" ] && [ -w "$o1" ] || { o1=./.canary1.$$; : >"$o1" 2>/dev/null || o1="\${HOME:-.}/.canary1.$$"; }
+[ -n "$o1" ] && [ -w "$o1" ] || { o1=./.canary1.$$; ( : >"$o1" ) 2>/dev/null || o1="\${HOME:-.}/.canary1.$$"; }
 o2="$o1.env"
 mode=direct
 ( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ) >"$o1" 2>&1 &
