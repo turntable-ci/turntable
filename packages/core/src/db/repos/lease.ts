@@ -109,16 +109,20 @@ export type ClaimOptions = {
 /** The defaults of `preemptLimit`, mirrored by the settings of the same names. */
 export const DEFAULT_PREEMPT_LIMIT = { max: 0, windowMs: 60 * 60_000 } as const;
 
+// Keyed by the root handle `claimNextAttempt` was given. A transaction handle is new for every
+// claim, so keying on it (as this once did) never hit, and every claim re-ran the sandbox-span
+// query for every waiting org (#815).
 const usageCache = new WeakMap<Db, Map<string, { at: number; usage: QuotaUsage }>>();
-async function cachedUsage(
+export async function cachedUsage(
   db: Db,
   orgId: string,
   now: number,
   ttl: number,
   limits: Pick<OrgQuotas, "maxLogBytes">,
+  cacheKey: Db = db,
 ): Promise<QuotaUsage> {
-  let m = usageCache.get(db);
-  if (!m) usageCache.set(db, (m = new Map()));
+  let m = usageCache.get(cacheKey);
+  if (!m) usageCache.set(cacheKey, (m = new Map()));
   const hit = m.get(orgId);
   // A limit set since the entry was cached needs the measured figure, not the skipped one.
   const measured = limits.maxLogBytes === null || hit?.usage.logBytes != null;
@@ -135,9 +139,10 @@ async function noticesOnce(
   statuses: readonly QuotaStatus[],
   now: number,
   ttl: number,
+  cacheKey: Db = db,
 ): Promise<void> {
-  let m = noticeAt.get(db);
-  if (!m) noticeAt.set(db, (m = new Map()));
+  let m = noticeAt.get(cacheKey);
+  if (!m) noticeAt.set(cacheKey, (m = new Map()));
   const last = m.get(orgId);
   if (ttl > 0 && last !== undefined && Math.abs(now - last) < ttl) return;
   m.set(orgId, now);
@@ -293,9 +298,9 @@ export function claimNextAttempt(db: Db, o: ClaimOptions): Promise<Claim | undef
       for (const w of waiting) {
         const q = quotas.get(w.orgId);
         if (!q) continue;
-        const usage = await cachedUsage(tx, w.orgId, o.now, o.quotaCacheMs ?? 0, q);
+        const usage = await cachedUsage(tx, w.orgId, o.now, o.quotaCacheMs ?? 0, q, db);
         const statuses = quotaStatuses(q, { ...usage, concurrent: perOrg.get(w.orgId) ?? 0 });
-        await noticesOnce(tx, w.orgId, statuses, o.now, o.quotaCacheMs ?? 0);
+        await noticesOnce(tx, w.orgId, statuses, o.now, o.quotaCacheMs ?? 0, db);
         const hold = statuses.find(
           (st) => st.metric !== "runs_per_hour" && st.metric !== "concurrent" && st.held,
         );

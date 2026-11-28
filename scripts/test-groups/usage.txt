@@ -1,2 +1,3 @@
 packages/core/tests/sandbox-usage.test.ts
 packages/core/tests/sandbox-spans-bound.test.ts
+packages/core/tests/claim-usage-cost.test.ts
