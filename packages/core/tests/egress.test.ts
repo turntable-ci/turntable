@@ -461,3 +461,78 @@ test.skipIf(!hasCurl)(
     }
   },
 );
+
+test.skipIf(!hasCurl)(
+  "a block-all gateway that refuses plain HTTP (403, no target body) is not reachable",
+  async () => {
+    const gateway = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("forbidden by network policy", { status: 403 }),
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${gateway.port}`,
+        http_proxy: `http://127.0.0.1:${gateway.port}`,
+      });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toEqual({
+        kind: "blocked",
+      });
+    } finally {
+      await gateway.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "a forwarding proxy that answers the target with an error is still reachable",
+  async () => {
+    // Forwards the target (a 404 from it) and fails for an address that cannot exist.
+    const proxy = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req) =>
+        (req.headers.get("host") ?? "").includes("192.0.2.1")
+          ? new Response("bad gateway", { status: 502 })
+          : new Response("not found on the target", { status: 404 }),
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${proxy.port}`,
+        http_proxy: `http://127.0.0.1:${proxy.port}`,
+      });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        detail: "curl env http 404",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
+test.skipIf(!hasCurl)(
+  "targets that drop packets are probed in parallel, so the passes do not add up",
+  async () => {
+    // Accepts connections and never answers: every probe runs to its 3s limit.
+    const hang = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {}, open() {} },
+    });
+    try {
+      const p = localProvider(REAL_PATH, {
+        HTTP_PROXY: `http://127.0.0.1:${hang.port}`,
+        http_proxy: `http://127.0.0.1:${hang.port}`,
+      });
+      const targets = Array.from({ length: 4 }, () => `127.0.0.1:${hang.port}`);
+      const t0 = Date.now();
+      expect(await probeEgress(p, "sbx", { targets })).toEqual({ kind: "blocked" });
+      // One pass is 4 x 3s = 12s; two passes in series would be 24s.
+      expect(Date.now() - t0).toBeLessThan(18_000);
+    } finally {
+      hang.stop(true);
+    }
+  },
+  40_000,
+);

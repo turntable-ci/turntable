@@ -23,21 +23,34 @@ fi
 [ -n "$tool" ] || exit 125
 # $mode is direct (proxy variables unset, so the network itself is tested) or env (the
 # environment as a job step sees it, so a forwarding proxy is caught too).
+# TEST-NET-1 (RFC 5737): never routable, so a proxy that really forwards cannot answer for it.
+CONTROL=192.0.2.1:80
+control_curl() { curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$CONTROL/" 2>/dev/null; }
 probe() {
   for t in "$@"; do
     h=\${t%:*}; p=\${t##*:}
     case $tool in
       curl)
         if [ "$mode" = direct ]; then
-          code=$(curl --noproxy '*' -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
+          r=$(curl --noproxy '*' -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$h:$p/" 2>/dev/null)
         else
-          code=$(curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}' "http://$h:$p/" 2>/dev/null)
+          r=$(curl -s -m 3 --connect-timeout 3 -o /dev/null -w '%{http_code}:%{size_download}' "http://$h:$p/" 2>/dev/null)
         fi
-        [ -n "$code" ] && [ "$code" != 000 ] && { echo "reachable $t curl $mode http $code"; exit 10; } ;;
+        code=\${r%%:*}
+        if [ -n "$code" ] && [ "$code" != 000 ]; then
+          # Through the environment's proxy, an error reply that is the same for an address that
+          # cannot exist is the proxy refusing (a block-all gateway), not the target answering.
+          [ "$mode" = env ] && [ "$code" -ge 400 ] && [ "$r" = "$(control_curl)" ] && continue
+          echo "reachable $t curl $mode http $code"; exit 10
+        fi ;;
       wget)
         wget -q -T 3 -t 1 -O /dev/null "http://$h:$p/" >/dev/null 2>&1; rc=$?
-        # 0: fetched; 8: the server answered with an error. Either way something answered.
-        [ $rc -eq 0 ] || [ $rc -eq 8 ] && { echo "reachable $t wget $mode exit $rc"; exit 10; } ;;
+        # 0: fetched; 8: the server answered with an error. Either way something answered,
+        # unless (env) the same error comes back for an address that cannot exist.
+        if [ $rc -eq 0 ] || [ $rc -eq 8 ]; then
+          [ "$mode" = env ] && [ $rc -eq 8 ] && { wget -q -T 3 -t 1 -O /dev/null "http://$CONTROL/" >/dev/null 2>&1; [ $? -eq 8 ]; } && continue
+          echo "reachable $t wget $mode exit $rc"; exit 10
+        fi ;;
       nc)
         nc -z -w 3 "$h" "$p" >/dev/null 2>&1 && { echo "reachable $t nc $mode tcp connect"; exit 10; } ;;
       bash)
