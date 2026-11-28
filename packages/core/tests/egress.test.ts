@@ -201,6 +201,25 @@ test.skipIf(!hasCurl)(
   },
 );
 
+test.skipIf(!hasCurl)(
+  "a forwarding proxy set in curlrc is a breach even with no proxy variable in the environment",
+  async () => {
+    const proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    const home = mkdtempSync(join(tmp, "home-"));
+    await Bun.write(join(home, ".curlrc"), `proxy = "http://127.0.0.1:${proxy.port}"\n`);
+    try {
+      const p = localProvider(REAL_PATH, { HOME: home });
+      expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toMatchObject({
+        kind: "reachable",
+        target: "127.0.0.1:9",
+        detail: "curl env http 200",
+      });
+    } finally {
+      await proxy.stop(true);
+    }
+  },
+);
+
 test.skipIf(!hasCurl)("a dead proxy and a closed direct path is blocked", async () => {
   const p = localProvider(REAL_PATH, { HTTP_PROXY: "http://127.0.0.1:9" });
   expect(await probeEgress(p, "sbx", { targets: ["127.0.0.1:9"] })).toEqual({ kind: "blocked" });

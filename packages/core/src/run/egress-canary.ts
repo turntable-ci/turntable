@@ -49,13 +49,13 @@ probe() {
 mode=direct
 ( unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; probe "$@" ); rc=$?
 [ $rc -eq 0 ] || exit $rc
-# Only curl, wget and the shell read these variables. A proxy does not matter to nc or bash.
+# Only curl and wget take a proxy from their environment or config (~/.curlrc, ~/.wgetrc, which
+# the direct pass's --noproxy overrides), so always run the pass as a job step sees it. A proxy
+# does not matter to nc or bash.
 if [ "$tool" = curl ] || [ "$tool" = wget ]; then
-  if [ -n "$HTTP_PROXY$http_proxy$ALL_PROXY$all_proxy" ]; then
-    mode=env
-    ( probe "$@" ); rc=$?
-    [ $rc -eq 0 ] || exit $rc
-  fi
+  mode=env
+  ( probe "$@" ); rc=$?
+  [ $rc -eq 0 ] || exit $rc
 fi
 exit 0
 `.replace(/\\\$/g, "$");
@@ -102,7 +102,7 @@ export async function probeEgress(
         const detail = m?.[2]?.trim().slice(0, 120);
         return {
           kind: "reachable",
-          target: m?.[1] ?? "a target",
+          target: m?.[1]?.slice(0, 64) ?? "a target",
           ...(detail ? { detail } : {}),
         };
       }
