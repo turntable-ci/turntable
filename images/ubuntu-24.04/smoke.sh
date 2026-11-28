@@ -17,6 +17,10 @@ go version
 java -version
 id runner
 sudo -n -u runner sudo -n true
+# The managed Python dir is runner-writable, so `uv python install` works as runner.
+sudo -n -u runner uv python find 3.13 >/dev/null
+sudo -n -u runner touch /opt/uv-python/.write-probe
+sudo -n -u runner rm /opt/uv-python/.write-probe
 
 # As root: the services drop to runner.
 POSTGRES_PASSWORD=pw POSTGRES_DB=app turntable-svc start postgres

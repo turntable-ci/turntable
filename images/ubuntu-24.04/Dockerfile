@@ -77,7 +77,11 @@ RUN set -eux; \
     curl -fsSL -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz"; \
     echo "${UV_SHA256}  /tmp/uv.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/uv.tar.gz -C /usr/local/bin --strip-components=1; \
+    userdel -r ubuntu 2>/dev/null || true; \
+    useradd -m -u 1001 -s /bin/bash runner; \
+    install -d -o runner -g runner -m 0755 /opt/uv-python; \
     uv python install "${PYTHON_VERSION}"; \
+    chown -R runner:runner /opt/uv-python; \
     ln -sf "$(uv python find "${PYTHON_VERSION}")" /usr/local/bin/python3; \
     ln -sf /usr/local/bin/python3 /usr/local/bin/python; \
     curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"; \
@@ -90,12 +94,9 @@ RUN set -eux; \
 COPY turntable-svc /usr/local/bin/turntable-svc
 RUN set -eux; \
     chmod 0755 /usr/local/bin/turntable-svc; \
-    userdel -r ubuntu 2>/dev/null || true; \
-    useradd -m -u 1001 -s /bin/bash runner; \
     echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner; \
     chmod 0440 /etc/sudoers.d/runner; \
-    install -d -o runner -g runner -m 0755 /var/lib/turntable-svc /var/run/turntable-svc /opt/uv-python; \
-    chown -R runner:runner /opt/uv-python; \
+    install -d -o runner -g runner -m 0755 /var/lib/turntable-svc /var/run/turntable-svc; \
     chmod 1777 /var/run/postgresql /var/run/mysqld 2>/dev/null || install -d -m 1777 /var/run/postgresql /var/run/mysqld; \
     git --version; gh --version | head -1; jq --version; zstd --version; \
     node --version; npm --version; bun --version; uv --version; python3 --version; \
